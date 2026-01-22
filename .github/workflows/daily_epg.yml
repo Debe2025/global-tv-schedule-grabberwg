@@ -32,9 +32,10 @@ jobs:
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Run WebGrab+Plus (Universal Discovery)
+      - name: Run WebGrab+Plus (Network Host Mode)
         run: |
           docker run --rm \
+            --network="host" \
             -v $(pwd)/config:/config \
             -v $(pwd)/epg_db:/data \
             -e PUID=1000 -e PGID=1000 \
@@ -57,13 +58,28 @@ jobs:
         if: always()
         run: sudo chown -R $USER:$USER epg_db/ config/
 
-      - name: Print WebGrab Log (Debugging)
+      - name: Print WebGrab Log
         run: cat config/WebGrab++.log.txt || echo "Log file not found"
 
-      - name: Update Status to Ready
-        if: success()
+      - name: Validate Output and Update Status
+        if: always()
         run: |
-          python3 -c "import json, datetime; d={'country':'${{ env.COUNTRY }}', 'status':'ready', 'last_run': str(datetime.datetime.now())}; json.dump(d, open('epg_db/status.json', 'w'))"
+          python3 -c "
+          import json, datetime, os
+          country = '${{ env.COUNTRY }}'
+          xml_exists = os.path.exists(f'epg_db/{country}.xml')
+          status = 'ready' if xml_exists else 'failed'
+          d = {
+              'country': country,
+              'status': status,
+              'last_run': str(datetime.datetime.now()),
+              'file_found': xml_exists
+          }
+          with open('epg_db/status.json', 'w') as f:
+              json.dump(d, f)
+          if not xml_exists:
+              print(f'ERROR: {country}.xml was not created!')
+          "
 
       - name: Commit and Push
         if: success()
