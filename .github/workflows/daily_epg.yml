@@ -56,15 +56,29 @@ jobs:
           export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
           dotnet --version || echo ".NET version check failed"
 
-          echo "Downloading WebGrab+Plus binaries..."
-          WG_VERSION="5.5.0"
-          curl -L -o wg.tar.gz "https://github.com/SilentButeo2/WebGrabPlus/raw/master/Install/WebGrabPlus_V${WG_VERSION}.tar.gz" \
-            || curl -L -o wg.tar.gz "https://webgrabplus.com/download/script?file=WebGrabPlus_V${WG_VERSION}.tar.gz" \
-            || { echo "Failed to download WebGrab+Plus archive"; exit 1; }
+          echo "Downloading official WebGrab+Plus Linux installer (v5.5)..."
+          curl -L -o WebGrabPlus_5.5_install.tar.gz "https://webgrabplus.com/sites/default/files/download/SW/V5.5.0/WebGrabPlus_5.5_install.tar.gz" \
+            || { echo "Download failed - check URL or network"; exit 1; }
 
-          mkdir -p wg
-          tar -xzf wg.tar.gz -C wg || { echo "Failed to extract WebGrab+Plus"; exit 1; }
-          cd wg/WebGrabPlus || { echo "WebGrabPlus folder not found after extraction"; exit 1; }
+          echo "Extracting archive..."
+          tar -xzf WebGrabPlus_5.5_install.tar.gz || { echo "Extraction failed"; ls -la; exit 1; }
+
+          # Debug: show what was extracted
+          echo "Extracted files/folders:"
+          ls -la
+
+          # Typical extraction creates ~/.wg++ or WebGrabPlus folder - find and cd
+          if [ -d ".wg++" ]; then
+            cd .wg++
+          elif [ -d "WebGrabPlus" ]; then
+            cd WebGrabPlus
+          else
+            echo "Could not find WebGrabPlus folder after extraction"
+            exit 1
+          fi
+
+          echo "Current dir after cd: $(pwd)"
+          ls -la  # show dll etc.
 
           echo "Copying configuration and siteini pack..."
           cp -r ../../config/* ./ 2>/dev/null || true
@@ -73,18 +87,17 @@ jobs:
 
           echo "Overriding output filename to local output/ folder..."
           mkdir -p output
-          # More robust replacement - targets the filename element
-          sed -i '/<filename>/c\  <filename>output/'${{ env.COUNTRY }}'.xml</filename>' WebGrab++.config.xml || true
-          # Fallback if sed didn't match exactly
-          grep -q "output/${{ env.COUNTRY }}.xml" WebGrab++.config.xml || \
-            sed -i "s|/data/.*\.xml|output/${{ env.COUNTRY }}.xml|g" WebGrab++.config.xml
+          # Replace the <filename> line
+          sed -i '/<filename>/c\  <filename>output/'${{ env.COUNTRY }}'.xml</filename>' WebGrab++.config.xml 2>/dev/null || true
+          # Fallback broad replace
+          sed -i "s|/data/.*\.xml|output/${{ env.COUNTRY }}.xml|g" WebGrab++.config.xml 2>/dev/null || true
 
-          cat WebGrab++.config.xml | grep filename || echo "No filename line found in config"
+          grep filename WebGrab++.config.xml || echo "Filename override may have failed"
 
           echo "Starting WebGrab+Plus natively..."
           dotnet WebGrab+Plus.dll . || echo "WebGrab+Plus exited with code $?"
 
-          echo "Copying results back..."
+          echo "Copying results back to epg_db..."
           ls -la output/*.xml 2>/dev/null || true
           cp output/*.xml ../../epg_db/ 2>/dev/null || true
           cp WebGrab*.log* ../../config/ 2>/dev/null || true
