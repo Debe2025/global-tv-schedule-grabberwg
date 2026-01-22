@@ -1,10 +1,12 @@
 <?xml version="1.0"?>
 <settings>
+  <!-- This is just the template. filter_wg_channels.py will overwrite filename -->
   <filename>/data/guide.xml</filename>
-  <mode>n#</mode>
+  <mode>n#</mode>           <!-- new + nocache = force fresh grab -->
   <siteini>/config/siteini.pack</siteini>
   <logging>on</logging>
   <retry time-out="5" skip="y">4</retry>
-  <timespan>1</timespan>
-  <update>f</update>
+  <timespan days="2">       <!-- increased slightly so you see something even if today has poor data -->
+  </timespan>
+  <update>f</update>        <!-- force grab even if already in db -->
 </settings>
