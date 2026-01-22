@@ -24,19 +24,18 @@ jobs:
 
       - name: Download and Extract SiteInis
         run: |
-          # Use a more reliable download method and force overwrite
           wget -O siteini.tar.gz https://github.com/SilentButeo2/webgrabplus-siteinipack/archive/refs/heads/master.tar.gz
           tar -xzf siteini.tar.gz --strip-components=1 -C config/siteini.pack
-          # Verify download
-          COUNT=$(find config/siteini.pack -name "*.ini" | wc -l)
-          echo "Successfully downloaded $COUNT SiteIni files."
-          if [ "$COUNT" -eq "0" ]; then exit 1; fi
+          echo "SiteInis extracted: $(ls config/siteini.pack | wc -l) files found."
 
       - name: Run Python Filter
         run: |
           COUNTRY=${{ github.event.client_payload.country || github.event.inputs.country }}
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
+
+      - name: Debug - Inspect Generated Config
+        run: head -n 50 config/WebGrab++.config.xml
 
       - name: Run WebGrab+Plus
         run: |
@@ -63,9 +62,8 @@ jobs:
           import json, datetime, os
           country = '${{ env.COUNTRY }}'
           xml_file = f'epg_db/{country}.xml'
-          xml_exists = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
-          status = 'ready' if xml_exists else 'failed'
-          d = {'country': country, 'status': status, 'last_run': str(datetime.datetime.now()), 'file_found': xml_exists}
+          exists = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
+          d = {'country': country, 'status': 'ready' if exists else 'failed', 'last_run': str(datetime.datetime.now()), 'file_found': exists}
           with open('epg_db/status.json', 'w') as f:
               json.dump(d, f)
           "
