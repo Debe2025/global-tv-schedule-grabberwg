@@ -40,23 +40,22 @@ jobs:
             -e PUID=1000 -e PGID=1000 \
             lscr.io/linuxserver/webgrabplus:latest \
             /bin/sh -c "
-              # Find the .NET or Mono executable
               DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
               MONO_BIN=\$(find / -name mono -type f -executable | head -n 1)
-              
               if [ -n \"\$DOTNET_BIN\" ]; then
-                echo \"Using .NET runtime at \$DOTNET_BIN\"
                 DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
                 \$DOTNET_BIN \$DLL_PATH /config
               elif [ -n \"\$MONO_BIN\" ]; then
-                echo \"Using Mono runtime at \$MONO_BIN\"
                 EXE_PATH=\$(find /app -name WebGrab+Plus.exe | head -n 1)
                 \$MONO_BIN \$EXE_PATH /config
               else
-                echo \"Error: No runtime (dotnet or mono) found!\"
                 exit 1
               fi
             "
+
+      - name: Fix Permissions
+        if: always()
+        run: sudo chown -R $USER:$USER epg_db/ config/
 
       - name: Update Status to Ready
         if: success()
