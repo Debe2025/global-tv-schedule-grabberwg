@@ -1,6 +1,7 @@
 import os
 import sys
 import requests
+import json
 import xml.etree.ElementTree as ET
 
 def build_dynamic_config(country_code):
@@ -20,19 +21,19 @@ def build_dynamic_config(country_code):
     site_configs = [g for g in guides if g['channel'] in country_channels]
 
     if not site_configs:
-        print(f"No EPG sources found for {country_code}. Using fallback.")
+        print(f"No EPG sources found for {country_code}.")
         return
 
     # 3. Load Master Template
     os.makedirs('config', exist_ok=True)
+    os.makedirs('epg_db', exist_ok=True) # Ensure epg_db exists
     tree = ET.parse('config/master.config.xml')
     root = tree.getroot()
 
-    # 4. Update the output filename (Must be absolute for Docker)
-    # Inside Docker, /data maps to your epg_db folder
+    # 4. Update the output filename (Docker internal path)
     root.find('filename').text = f"/data/{country_code}.xml"
 
-    # 5. Add dynamic channels (Limit to 50 for speed/stability)
+    # 5. Add dynamic channels
     for entry in site_configs[:50]:
         chan_elem = ET.SubElement(root, 'channel')
         chan_elem.set('site', entry['site'])
@@ -40,18 +41,19 @@ def build_dynamic_config(country_code):
         chan_elem.set('xmltv_id', entry['channel'])
         chan_elem.text = entry['site_name']
 
-    # 6. Save final config to the /config folder
+    # 6. Save final config
     tree.write('config/WebGrab++.config.xml', encoding='utf-8', xml_declaration=True)
-    print(f"Success: Config created with {len(site_configs[:50])} channels.")
-
-    # 7. Create a status file (Processing)
+    
+    # 7. Create status file (Fixed the 'os.open' error here)
     status_data = {
         "country": country_code,
         "status": "processing",
-        "last_run": str(os.popen('date').read()).strip()
+        "timestamp": str(os.popen('date').read()).strip()
     }
-    with os.open('epg_db/status.json', 'w') as f:
+    with open('epg_db/status.json', 'w') as f:
         json.dump(status_data, f)
+        
+    print(f"Success: Config created with {len(site_configs[:50])} channels.")
 
 if __name__ == "__main__":
     code = sys.argv[1] if len(sys.argv) > 1 else 'US'
