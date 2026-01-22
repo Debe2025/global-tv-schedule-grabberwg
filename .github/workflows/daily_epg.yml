@@ -32,23 +32,22 @@ jobs:
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Run WebGrab+Plus (Network Host Mode)
+      - name: Run WebGrab+Plus
         run: |
           docker run --rm \
             --network="host" \
             -v $(pwd)/config:/config \
             -v $(pwd)/epg_db:/data \
             -e PUID=1000 -e PGID=1000 \
+            -e DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER=0 \
             lscr.io/linuxserver/webgrabplus:latest \
             /bin/sh -c "
               DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
               MONO_BIN=\$(find / -name mono -type f -executable | head -n 1)
               if [ -n \"\$DOTNET_BIN\" ]; then
-                DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
-                \$DOTNET_BIN \$DLL_PATH /config
+                \$DOTNET_BIN \$(find /app -name WebGrab+Plus.dll | head -n 1) /config
               elif [ -n \"\$MONO_BIN\" ]; then
-                EXE_PATH=\$(find /app -name WebGrab+Plus.exe | head -n 1)
-                \$MONO_BIN \$EXE_PATH /config
+                \$MONO_BIN \$(find /app -name WebGrab+Plus.exe | head -n 1) /config
               else
                 exit 1
               fi
@@ -58,27 +57,19 @@ jobs:
         if: always()
         run: sudo chown -R $USER:$USER epg_db/ config/
 
-      - name: Print WebGrab Log
-        run: cat config/WebGrab++.log.txt || echo "Log file not found"
-
-      - name: Validate Output and Update Status
+      - name: Validate and Update Status
         if: always()
         run: |
           python3 -c "
           import json, datetime, os
           country = '${{ env.COUNTRY }}'
-          xml_exists = os.path.exists(f'epg_db/{country}.xml')
+          xml_file = f'epg_db/{country}.xml'
+          xml_exists = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
           status = 'ready' if xml_exists else 'failed'
-          d = {
-              'country': country,
-              'status': status,
-              'last_run': str(datetime.datetime.now()),
-              'file_found': xml_exists
-          }
+          d = {'country': country, 'status': status, 'last_run': str(datetime.datetime.now()), 'file_found': xml_exists}
           with open('epg_db/status.json', 'w') as f:
               json.dump(d, f)
-          if not xml_exists:
-              print(f'ERROR: {country}.xml was not created!')
+          if not xml_exists: print(f'--- ERROR: {xml_file} NOT CREATED ---')
           "
 
       - name: Commit and Push
