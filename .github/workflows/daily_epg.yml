@@ -1,47 +1,27 @@
-name: Triggered Country EPG
+name: WebGrab+Plus EPG
 on:
   repository_dispatch:
     types: [build_epg]
-  workflow_dispatch:
-    inputs:
-      country:
-        description: 'Country Code (e.g., CA)'
-        required: true
-        default: 'CA'
 
 jobs:
-  grab:
+  run_wg:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/checkout@v3
-        with:
-          repository: iptv-org/epg
-          path: grabber
-      
-      - name: Setup Node
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
 
-      - name: Install Grabber
-        run: cd grabber && npm install
+      - name: Prepare Config
+        run: python3 filter_wg_channels.py ${{ github.event.client_payload.country }}
 
-      - name: Create Config
-        # Determine country from dispatch payload OR manual input
+      - name: Run WebGrab+Plus (Docker)
         run: |
-          COUNTRY_CODE=${{ github.event.client_payload.country || github.event.inputs.country }}
-          python3 filter_channels.py $COUNTRY_CODE
-          echo "COUNTRY=$COUNTRY_CODE" >> $GITHUB_ENV
+          docker run --rm \
+            -v $(pwd)/config:/config \
+            -v $(pwd)/epg_db:/data \
+            linuxserver/webgrabplus:latest
 
-      - name: Run Grabber
+      - name: Push to Repo
         run: |
-          cd grabber
-          npm run grab -- --channels=../channels.json --output=../epg_db/${{ env.COUNTRY }}.xml
-
-      - name: Deploy to Repo
-        run: |
-          git config --global user.name "EPG-Bot"
+          git config --global user.name "WG-Bot"
           git add epg_db/*.xml
-          git commit -m "Updated EPG for ${{ env.COUNTRY }}" || exit 0
+          git commit -m "WG++ Update: ${{ github.event.client_payload.country }}"
           git push
