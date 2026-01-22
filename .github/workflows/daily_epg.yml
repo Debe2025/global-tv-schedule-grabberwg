@@ -1,4 +1,5 @@
 name: Dynamic Country EPG (WG++)
+
 on:
   repository_dispatch:
     types: [run_webgrab]
@@ -16,20 +17,30 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout EPG Repo
+      - name: Checkout this repo
         uses: actions/checkout@v4
 
-      - name: Fetch SiteIni Pack (SilentButeo2)
+      - name: Fetch SiteIni Pack (SilentButeo2) – correct nesting
         uses: actions/checkout@v4
         with:
           repository: SilentButeo2/webgrabplus-siteinipack
-          path: config/siteini.pack
+          path: siteini-temp
+
+      - name: Move siteini.pack contents to correct location (avoid double nesting)
+        run: |
+          mkdir -p config/siteini.pack
+          mv siteini-temp/siteini.pack/* config/siteini.pack/  || true
+          rm -rf siteini-temp
+          ls -R config/siteini.pack | head -n 30   # debug: show structure
 
       - name: Run Python Filter
         run: |
-          COUNTRY=${{ github.event.client_payload.country || github.event.inputs.country }}
-          python3 filter_wg_channels.py $COUNTRY
+          COUNTRY=${{ github.event.client_payload.country || inputs.country || 'CA' }}
+          python3 filter_wg_channels.py "$COUNTRY"
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
+
+      - name: Show generated WebGrab config (debug)
+        run: cat config/WebGrab++.config.xml || true
 
       - name: Run WebGrab+Plus
         run: |
@@ -41,38 +52,53 @@ jobs:
             lscr.io/linuxserver/webgrabplus:latest \
             /bin/sh -c "
               DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
-              DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
-              \$DOTNET_BIN \$DLL_PATH /config nodate
+              DLL_PATH=\$(find /app -name WebGrab+Plus.dll -print -quit 2>/dev/null || find / -name WebGrab+Plus.dll -print -quit)
+              echo 'Running WebGrab from: ' \$DLL_PATH
+              \$DOTNET_BIN \$DLL_PATH /config
             "
+
+      - name: Show WebGrab logs (very important for debugging)
+        if: always()
+        run: |
+          echo "WebGrab++ log files:"
+          ls -la config/ | grep -i log || true
+          cat config/WebGrab*.log* 2>/dev/null || echo "No log files found"
 
       - name: Fix Permissions
         if: always()
-        run: sudo chown -R $USER:$USER epg_db/ config/
+        run: sudo chown -R $(whoami) epg_db/ config/ || true
 
-      # --- THIS IS THE VERIFICATION STEP ---
-      - name: Verify Output Folder
+      - name: Verify Output
         run: |
           echo "Checking epg_db folder for ${{ env.COUNTRY }}.xml..."
-          ls -lh epg_db/
-          if [ -f "epg_db/${{ env.COUNTRY }}.xml" ]; then
-            echo "✅ SUCCESS: File found. Size: $(du -h epg_db/${{ env.COUNTRY }}.xml | cut -f1)"
+          ls -lh epg_db/ || true
+          if [ -f "epg_db/${{ env.COUNTRY }}.xml" ] && [ -s "epg_db/${{ env.COUNTRY }}.xml" ]; then
+            echo "✅ SUCCESS: ${{ env.COUNTRY }}.xml exists and has size > 0"
+            du -h epg_db/${{ env.COUNTRY }}.xml
           else
-            echo "❌ ERROR: ${{ env.COUNTRY }}.xml NOT FOUND in epg_db/"
+            echo "❌ FAILED: ${{ env.COUNTRY }}.xml missing or empty"
           fi
 
-      - name: Validate and Push
+      - name: Update status.json & Commit
         if: always()
         run: |
           python3 -c "
           import json, datetime, os
           country = '${{ env.COUNTRY }}'
           xml_file = f'epg_db/{country}.xml'
-          exists = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
-          d = {'country': country, 'status': 'ready' if exists else 'failed', 'last_run': str(datetime.datetime.now()), 'file_found': exists}
-          json.dump(d, open('epg_db/status.json', 'w'))
+          exists = os.path.exists(xml_file) and os.path.getsize(xml_file) > 1000
+          d = {
+              'country': country,
+              'status': 'ready' if exists else 'failed',
+              'last_run': str(datetime.datetime.utcnow()),
+              'file_found': exists,
+              'file_size_bytes': os.path.getsize(xml_file) if exists else 0
+          }
+          with open('epg_db/status.json', 'w') as f:
+              json.dump(d, f, indent=2)
           "
-          git config --global user.name "EPG-Bot"
+          git config --global user.name "EPG Bot"
           git config --global user.email "bot@github.com"
           git add epg_db/
-          git commit -m "Updated EPG for ${{ env.COUNTRY }} [skip ci]" || exit 0
-          git push
+          git commit -m "EPG update for ${{ env.COUNTRY }} – ${{ env.status || 'unknown' }} [skip ci]" || echo "Nothing to commit"
+          git push || echo "Push failed (maybe no changes)"
