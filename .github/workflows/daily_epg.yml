@@ -16,31 +16,36 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout EPG Repo
         uses: actions/checkout@v4
-
-      - name: Create Directories
-        run: mkdir -p epg_db config/siteini.pack
+        with:
+          path: main_repo
 
       - name: Fetch SiteIni Pack
         uses: actions/checkout@v4
         with:
           repository: SilentButeo2/webgrabplus-siteinipack
-          path: config/siteini.pack
+          path: main_repo/config/siteini.pack
 
-      - name: Verify SiteInis
+      - name: Prepare Workspace
         run: |
-          ls config/siteini.pack
-          echo "Files in pack: $(find config/siteini.pack -name "*.ini" | wc -l)"
+          cd main_repo
+          mkdir -p epg_db
+          echo "### File Check" >> $GITHUB_STEP_SUMMARY
+          INI_COUNT=$(find config/siteini.pack -name "*.ini" | wc -l)
+          echo "* SiteInis Found: $INI_COUNT" >> $GITHUB_STEP_SUMMARY
+          if [ "$INI_COUNT" -eq "0" ]; then echo "❌ SITEINIS MISSING" && exit 1; fi
 
       - name: Run Python Filter
         run: |
+          cd main_repo
           COUNTRY=${{ github.event.client_payload.country || github.event.inputs.country }}
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
       - name: Run WebGrab+Plus
         run: |
+          cd main_repo
           docker run --rm \
             --network="host" \
             -v $(pwd)/config:/config \
@@ -55,11 +60,12 @@ jobs:
 
       - name: Fix Permissions
         if: always()
-        run: sudo chown -R $USER:$USER epg_db/ config/
+        run: sudo chown -R $USER:$USER main_repo/
 
-      - name: Validate and Update Status
+      - name: Final Validation
         if: always()
         run: |
+          cd main_repo
           python3 -c "
           import json, datetime, os
           country = '${{ env.COUNTRY }}'
@@ -73,6 +79,7 @@ jobs:
       - name: Commit and Push
         if: success()
         run: |
+          cd main_repo
           git config --global user.name "EPG-Bot"
           git config --global user.email "bot@github.com"
           git add epg_db/
