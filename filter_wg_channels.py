@@ -44,6 +44,15 @@ def build_dynamic_config(country_code):
     tree.write('config/WebGrab++.config.xml', encoding='utf-8', xml_declaration=True)
     print(f"Success: Config created with {len(site_configs[:50])} channels.")
 
+    # 7. Create a status file (Processing)
+    status_data = {
+        "country": country_code,
+        "status": "processing",
+        "last_run": str(os.popen('date').read()).strip()
+    }
+    with os.open('epg_db/status.json', 'w') as f:
+        json.dump(status_data, f)
+
 if __name__ == "__main__":
     code = sys.argv[1] if len(sys.argv) > 1 else 'US'
     build_dynamic_config(code)
