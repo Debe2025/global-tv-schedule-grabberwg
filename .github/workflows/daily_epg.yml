@@ -6,6 +6,7 @@ on:
     inputs:
       country:
         description: 'Country Code (e.g., CA)'
+        required: true
         default: 'CA'
 
 jobs:
@@ -13,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,19 +32,25 @@ jobs:
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Run WebGrab+Plus (Force Exit Mode)
+      - name: Run WebGrab+Plus (Direct .NET Mode)
         run: |
+          # This command points specifically to the app's DLL inside the container
           docker run --rm \
             -v $(pwd)/config:/config \
             -v $(pwd)/epg_db:/data \
             -e PUID=1000 -e PGID=1000 \
             lscr.io/linuxserver/webgrabplus:latest \
-            /usr/bin/dotnet /app/wg++/bin.net/WebGrab+Plus.dll /config
+            dotnet /app/wg++/WebGrab+Plus.dll /config
+
+      - name: Update Status to Ready
+        run: |
+          # Creates status.json so your playlist generator knows the file is live
+          python3 -c "import json, datetime; d={'country':'${{ env.COUNTRY }}', 'status':'ready', 'last_run': str(datetime.datetime.now())}; json.dump(d, open('epg_db/status.json', 'w'))"
 
       - name: Commit and Push
         run: |
           git config --global user.name "EPG-Bot"
           git config --global user.email "bot@github.com"
           git add epg_db/
-          git commit -m "Updated EPG for ${{ env.COUNTRY }}" || exit 0
+          git commit -m "Updated EPG for ${{ env.COUNTRY }} [skip ci]" || exit 0
           git push
