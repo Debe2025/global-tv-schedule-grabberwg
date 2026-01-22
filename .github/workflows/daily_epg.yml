@@ -18,34 +18,21 @@ jobs:
     steps:
       - name: Checkout EPG Repo
         uses: actions/checkout@v4
-        with:
-          path: main_repo
 
-      - name: Fetch SiteIni Pack
+      - name: Fetch SiteIni Pack (SilentButeo2)
         uses: actions/checkout@v4
         with:
           repository: SilentButeo2/webgrabplus-siteinipack
-          path: main_repo/config/siteini.pack
-
-      - name: Prepare Workspace
-        run: |
-          cd main_repo
-          mkdir -p epg_db
-          echo "### File Check" >> $GITHUB_STEP_SUMMARY
-          INI_COUNT=$(find config/siteini.pack -name "*.ini" | wc -l)
-          echo "* SiteInis Found: $INI_COUNT" >> $GITHUB_STEP_SUMMARY
-          if [ "$INI_COUNT" -eq "0" ]; then echo "❌ SITEINIS MISSING" && exit 1; fi
+          path: config/siteini.pack
 
       - name: Run Python Filter
         run: |
-          cd main_repo
           COUNTRY=${{ github.event.client_payload.country || github.event.inputs.country }}
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
       - name: Run WebGrab+Plus
         run: |
-          cd main_repo
           docker run --rm \
             --network="host" \
             -v $(pwd)/config:/config \
@@ -60,26 +47,30 @@ jobs:
 
       - name: Fix Permissions
         if: always()
-        run: sudo chown -R $USER:$USER main_repo/
+        run: sudo chown -R $USER:$USER epg_db/ config/
 
-      - name: Final Validation
+      # --- THIS IS THE VERIFICATION STEP ---
+      - name: Verify Output Folder
+        run: |
+          echo "Checking epg_db folder for ${{ env.COUNTRY }}.xml..."
+          ls -lh epg_db/
+          if [ -f "epg_db/${{ env.COUNTRY }}.xml" ]; then
+            echo "✅ SUCCESS: File found. Size: $(du -h epg_db/${{ env.COUNTRY }}.xml | cut -f1)"
+          else
+            echo "❌ ERROR: ${{ env.COUNTRY }}.xml NOT FOUND in epg_db/"
+          fi
+
+      - name: Validate and Push
         if: always()
         run: |
-          cd main_repo
           python3 -c "
           import json, datetime, os
           country = '${{ env.COUNTRY }}'
           xml_file = f'epg_db/{country}.xml'
           exists = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
           d = {'country': country, 'status': 'ready' if exists else 'failed', 'last_run': str(datetime.datetime.now()), 'file_found': exists}
-          with open('epg_db/status.json', 'w') as f:
-              json.dump(d, f)
+          json.dump(d, open('epg_db/status.json', 'w'))
           "
-
-      - name: Commit and Push
-        if: success()
-        run: |
-          cd main_repo
           git config --global user.name "EPG-Bot"
           git config --global user.email "bot@github.com"
           git add epg_db/
