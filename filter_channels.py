@@ -1,32 +1,25 @@
-import requests, json, sys, os
+import requests
+import xml.etree.ElementTree as ET
 
-def build_country_epg_config(country_code):
-    # Ensure the output directory exists
-    os.makedirs('epg_db', exist_ok=True)
-    
-    # 1. Fetch Global Data
+def update_wg_config(country_code):
+    # 1. Get channel list from API
     channels = requests.get("https://iptv-org.github.io/api/channels.json").json()
-    guides = requests.get("https://iptv-org.github.io/api/guides.json").json()
-    guide_map = {g['channel']: g for g in guides}
     
-    config_output = []
-    for chan in channels:
-        if chan.get('country') == country_code.upper():
-            cid = chan['id']
-            if cid in guide_map:
-                config_output.append({
-                    "site": guide_map[cid]['site'],
-                    "site_id": guide_map[cid]['site_id'],
-                    "xmltv_id": cid,
-                    "display_name": chan['name'],
-                    "logo": chan.get('logo') # <--- Logos included here
-                })
+    # 2. Open your base WG++ config
+    tree = ET.parse('config/WebGrab++.config.xml')
+    root = tree.getroot()
     
-    # Save a temporary config for the Node.js grabber to read
-    with open('channels.json', 'w') as f:
-        json.dump(config_output, f, indent=2)
+    # 3. Clear existing channels and add new ones for the country
+    for channel in channels:
+        if channel.get('country') == country_code.upper():
+            # You must manually map these to a 'site' and 'site_id' 
+            # that exists in your siteini.pack
+            new_chan = ET.SubElement(root, 'channel')
+            new_chan.set('site', 'example.com') # Replace with actual site
+            new_chan.set('site_id', channel['id'])
+            new_chan.set('xmltv_id', channel['id'])
+            new_chan.text = channel['name']
+            
+    tree.write('config/WebGrab++.config.xml')
 
-if __name__ == "__main__":
-    # Run: python filter_channels.py CA
-    target_country = sys.argv[1] if len(sys.argv) > 1 else 'CA'
-    build_country_epg_config(target_country)
+update_wg_config('CA')
