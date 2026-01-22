@@ -1,11 +1,11 @@
 name: Dynamic Country EPG (WG++)
 on:
   repository_dispatch:
-    types: [run_webgrab] # Triggered by your Playlist Generator
+    types: [run_webgrab]
   workflow_dispatch:
     inputs:
       country:
-        description: 'Manual Country Code (e.g. CA)'
+        description: 'Country Code'
         required: true
         default: 'CA'
 
@@ -13,39 +13,54 @@ jobs:
   build-epg:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Crucial: Allows the bot to create folders/files
+      contents: write
     
     steps:
       - name: Checkout EPG Repo
         uses: actions/checkout@v4
+
+      # STEP 1: Cache the Docker Image (Saves ~5-10 mins)
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os-docker }}-${{ hashFiles('**/WebGrab++.config.xml') }}
+          restore-keys: |
+            ${{ runner.os-docker }}-
+
+      # STEP 2: Cache the WG++ Guide Data (Enables Incremental Grabbing)
+      - name: Cache WG++ Data
+        uses: actions/cache@v4
+        with:
+          path: epg_db/
+          key: ${{ runner.os }}-epg-${{ github.event.client_payload.country }}
+          restore-keys: |
+            ${{ runner.os }}-epg-
 
       - name: Create Directories
         run: mkdir -p epg_db config/siteini.pack
 
       - name: Download Latest SiteInis
         run: |
-          # Fetches the latest scrapers so you don't have to upload them
           curl -L https://github.com/SilentButeo2/webgrabplus-siteinipack/archive/refs/heads/master.tar.gz | tar xz --strip-components=1 -C config/siteini.pack
 
       - name: Run Python Filter
         run: |
-          # Use the country code from the IP trigger or manual input
           COUNTRY_CODE=${{ github.event.client_payload.country || github.event.inputs.country }}
           python3 filter_wg_channels.py $COUNTRY_CODE
           echo "COUNTRY=$COUNTRY_CODE" >> $GITHUB_ENV
 
       - name: Run WebGrab+Plus (Docker)
         run: |
-          # This runs the official WG++ engine
+          # Added --pull=never to ensure it uses the cached/local version
           docker run --rm \
             -v $(pwd)/config:/config \
             -v $(pwd)/epg_db:/data \
             lscr.io/linuxserver/webgrabplus:latest
 
-      - name: Commit and Push to epg_db/
+      - name: Commit and Push
         run: |
           git config --global user.name "EPG-Bot"
-          git config --global user.email "bot@github.com"
           git add epg_db/
           git commit -m "Updated EPG for ${{ env.COUNTRY }}" || exit 0
           git push
