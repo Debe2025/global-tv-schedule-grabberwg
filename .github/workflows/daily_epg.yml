@@ -22,20 +22,22 @@ jobs:
       - name: Create Directories
         run: mkdir -p epg_db config/siteini.pack
 
-      - name: Download and Extract SiteInis
+      - name: Fetch SiteIni Pack
+        uses: actions/checkout@v4
+        with:
+          repository: SilentButeo2/webgrabplus-siteinipack
+          path: config/siteini.pack
+
+      - name: Verify SiteInis
         run: |
-          wget -O siteini.tar.gz https://github.com/SilentButeo2/webgrabplus-siteinipack/archive/refs/heads/master.tar.gz
-          tar -xzf siteini.tar.gz --strip-components=1 -C config/siteini.pack
-          echo "SiteInis extracted: $(ls config/siteini.pack | wc -l) files found."
+          ls config/siteini.pack
+          echo "Files in pack: $(find config/siteini.pack -name "*.ini" | wc -l)"
 
       - name: Run Python Filter
         run: |
           COUNTRY=${{ github.event.client_payload.country || github.event.inputs.country }}
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
-
-      - name: Debug - Inspect Generated Config
-        run: head -n 50 config/WebGrab++.config.xml
 
       - name: Run WebGrab+Plus
         run: |
