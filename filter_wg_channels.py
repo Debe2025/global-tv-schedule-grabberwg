@@ -21,19 +21,27 @@ def build_dynamic_config(country_code):
     
     # 4. Only add channels if the .ini file exists in the pack
     added = 0
+    # Pre-scan the siteini pack to map filenames to their subfolders
+    # This makes the script much faster than running os.walk for every single channel
+    ini_map = {}
+    pack_path = 'config/siteini.pack'
+    for r, d, f in os.walk(pack_path):
+        for filename in f:
+            if filename.endswith('.ini'):
+                # Get path relative to the pack folder (e.g., "Canada/tv.cravetv.ca.ini")
+                rel_path = os.path.relpath(os.path.join(r, filename), pack_path)
+                # Remove the .ini extension for the 'site' attribute
+                site_name_with_path = rel_path.replace('.ini', '')
+                ini_map[filename] = site_name_with_path
+
     for g in guides:
         if g['channel'] in country_channels and added < 50:
             ini_filename = f"{g['site']}.ini"
-            # Search for ini file recursively in the pack
-            ini_found = False
-            for r, d, f in os.walk('config/siteini.pack'):
-                if ini_filename in f:
-                    ini_found = True
-                    break
             
-            if ini_found:
+            if ini_filename in ini_map:
                 chan = ET.SubElement(root, 'channel')
-                chan.set('site', g['site'])
+                # Use the path-based site name so WebGrab finds it in subfolders
+                chan.set('site', ini_map[ini_filename])
                 chan.set('site_id', g['site_id'])
                 chan.set('xmltv_id', g['channel'])
                 chan.text = g['site_name']
