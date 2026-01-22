@@ -22,9 +22,15 @@ jobs:
       - name: Create Directories
         run: mkdir -p epg_db config/siteini.pack
 
-      - name: Download SiteInis
+      - name: Download and Extract SiteInis
         run: |
-          curl -L https://github.com/SilentButeo2/webgrabplus-siteinipack/archive/refs/heads/master.tar.gz | tar xz --strip-components=1 -C config/siteini.pack
+          # Use a more reliable download method and force overwrite
+          wget -O siteini.tar.gz https://github.com/SilentButeo2/webgrabplus-siteinipack/archive/refs/heads/master.tar.gz
+          tar -xzf siteini.tar.gz --strip-components=1 -C config/siteini.pack
+          # Verify download
+          COUNT=$(find config/siteini.pack -name "*.ini" | wc -l)
+          echo "Successfully downloaded $COUNT SiteIni files."
+          if [ "$COUNT" -eq "0" ]; then exit 1; fi
 
       - name: Run Python Filter
         run: |
@@ -32,7 +38,7 @@ jobs:
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Run WebGrab+Plus (Force Mode)
+      - name: Run WebGrab+Plus
         run: |
           docker run --rm \
             --network="host" \
@@ -43,16 +49,12 @@ jobs:
             /bin/sh -c "
               DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
               DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
-              # Running with 'nodate' to bypass system clock checks and force start
               \$DOTNET_BIN \$DLL_PATH /config nodate
             "
 
       - name: Fix Permissions
         if: always()
         run: sudo chown -R $USER:$USER epg_db/ config/
-
-      - name: Debug - List Files
-        run: ls -R epg_db/
 
       - name: Validate and Update Status
         if: always()
