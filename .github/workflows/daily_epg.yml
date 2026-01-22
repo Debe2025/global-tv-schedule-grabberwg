@@ -20,18 +20,18 @@ jobs:
       - name: Checkout this repo
         uses: actions/checkout@v4
 
-      - name: Fetch SiteIni Pack (SilentButeo2) – correct nesting
+      - name: Fetch SiteIni Pack (SilentButeo2)
         uses: actions/checkout@v4
         with:
           repository: SilentButeo2/webgrabplus-siteinipack
           path: siteini-temp
 
-      - name: Move siteini.pack contents to correct location (avoid double nesting)
+      - name: Move siteini.pack contents to correct location
         run: |
           mkdir -p config/siteini.pack
-          mv siteini-temp/siteini.pack/* config/siteini.pack/  || true
+          mv siteini-temp/siteini.pack/* config/siteini.pack/ 2>/dev/null || true
           rm -rf siteini-temp
-          ls -R config/siteini.pack | head -n 30   # debug: show structure
+          ls -R config/siteini.pack | head -n 40   # debug
 
       - name: Run Python Filter
         run: |
@@ -39,30 +39,53 @@ jobs:
           python3 filter_wg_channels.py "$COUNTRY"
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Show generated WebGrab config (debug)
-        run: cat config/WebGrab++.config.xml || true
-
-      - name: Run WebGrab+Plus
+      - name: Show generated config (debug)
         run: |
-          docker run --rm \
-            --network="host" \
-            -v $(pwd)/config:/config \
-            -v $(pwd)/epg_db:/data \
-            -e PUID=1000 -e PGID=1000 \
-            lscr.io/linuxserver/webgrabplus:latest \
-            /bin/sh -c "
-              DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
-              DLL_PATH=\$(find /app -name WebGrab+Plus.dll -print -quit 2>/dev/null || find / -name WebGrab+Plus.dll -print -quit)
-              echo 'Running WebGrab from: ' \$DLL_PATH
-              \$DOTNET_BIN \$DLL_PATH /config
-            "
+          echo "WebGrab++.config.xml contents:"
+          cat config/WebGrab++.config.xml || true
 
-      - name: Show WebGrab logs (very important for debugging)
+      - name: Install .NET 8 runtime + Download & Run WebGrab+Plus natively
+        run: |
+          # Install .NET 8 runtime (WG++ .NET version needs .NET 8+)
+          wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+          chmod +x dotnet-install.sh
+          ./dotnet-install.sh --channel 8.0 --install-dir ./dotnet --no-cdn
+          export DOTNET_ROOT=$(pwd)/dotnet
+          export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
+          dotnet --version
+
+          # Download latest stable WebGrab+Plus .NET binaries
+          WG_VERSION="5.5.0"
+          curl -L -o wg.tar.gz "https://github.com/SilentButeo2/WebGrabPlus/raw/master/Install/WebGrabPlus_V${WG_VERSION}.tar.gz" \
+            || curl -L -o wg.tar.gz "https://webgrabplus.com/sites/default/files/download/5.5.0/WebGrabPlus_V${WG_VERSION}.tar.gz"
+          
+          mkdir -p wg
+          tar -xzf wg.tar.gz -C wg
+          cd wg/WebGrabPlus
+
+          # Copy your config + siteini pack into the working directory
+          cp -r ../../config/* ./
+          mkdir -p siteini.pack
+          cp -r ../../config/siteini.pack/* siteini.pack/ || true
+
+          # Create output directory mapping (WG++ will write here instead of /data)
+          mkdir -p output
+          sed -i "s|/data/|output/|g" WebGrab++.config.xml
+
+          echo "Starting WebGrab+Plus natively..."
+          dotnet WebGrab+Plus.dll . || echo "WG++ exit code: $?"
+
+          # Move generated XML to epg_db
+          ls -la output/*.xml || true
+          cp output/*.xml ../../epg_db/ 2>/dev/null || true
+          cp WebGrab*.log* ../../config/ 2>/dev/null || true
+
+      - name: Show WebGrab logs
         if: always()
         run: |
-          echo "WebGrab++ log files:"
+          echo "WebGrab logs:"
           ls -la config/ | grep -i log || true
-          cat config/WebGrab*.log* 2>/dev/null || echo "No log files found"
+          cat config/WebGrab*.log* 2>/dev/null || echo "No logs found"
 
       - name: Fix Permissions
         if: always()
@@ -70,13 +93,13 @@ jobs:
 
       - name: Verify Output
         run: |
-          echo "Checking epg_db folder for ${{ env.COUNTRY }}.xml..."
+          echo "Checking epg_db/ for ${{ env.COUNTRY }}.xml"
           ls -lh epg_db/ || true
           if [ -f "epg_db/${{ env.COUNTRY }}.xml" ] && [ -s "epg_db/${{ env.COUNTRY }}.xml" ]; then
-            echo "✅ SUCCESS: ${{ env.COUNTRY }}.xml exists and has size > 0"
+            echo "SUCCESS: ${{ env.COUNTRY }}.xml found and non-empty"
             du -h epg_db/${{ env.COUNTRY }}.xml
           else
-            echo "❌ FAILED: ${{ env.COUNTRY }}.xml missing or empty"
+            echo "FAILED: ${{ env.COUNTRY }}.xml missing or empty"
           fi
 
       - name: Update status.json & Commit
@@ -90,7 +113,7 @@ jobs:
           d = {
               'country': country,
               'status': 'ready' if exists else 'failed',
-              'last_run': str(datetime.datetime.utcnow()),
+              'last_run': str(datetime.datetime.now(datetime.UTC)),
               'file_found': exists,
               'file_size_bytes': os.path.getsize(xml_file) if exists else 0
           }
@@ -100,5 +123,5 @@ jobs:
           git config --global user.name "EPG Bot"
           git config --global user.email "bot@github.com"
           git add epg_db/
-          git commit -m "EPG update for ${{ env.COUNTRY }} – ${{ env.status || 'unknown' }} [skip ci]" || echo "Nothing to commit"
-          git push || echo "Push failed (maybe no changes)"
+          git commit -m "EPG update for ${{ env.COUNTRY }} – ${{ env.status || 'unknown' }} [skip ci]" || echo "No changes to commit"
+          git push || echo "Push skipped"
