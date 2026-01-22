@@ -32,7 +32,7 @@ jobs:
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Run WebGrab+Plus (Universal Path Discovery)
+      - name: Run WebGrab+Plus (Universal Discovery)
         run: |
           docker run --rm \
             -v $(pwd)/config:/config \
@@ -56,6 +56,9 @@ jobs:
       - name: Fix Permissions
         if: always()
         run: sudo chown -R $USER:$USER epg_db/ config/
+
+      - name: Print WebGrab Log (Debugging)
+        run: cat config/WebGrab++.log.txt || echo "Log file not found"
 
       - name: Update Status to Ready
         if: success()
