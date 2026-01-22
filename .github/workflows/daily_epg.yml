@@ -32,30 +32,27 @@ jobs:
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Run WebGrab+Plus
+      - name: Run WebGrab+Plus (Force Mode)
         run: |
           docker run --rm \
             --network="host" \
             -v $(pwd)/config:/config \
             -v $(pwd)/epg_db:/data \
             -e PUID=1000 -e PGID=1000 \
-            -e DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER=0 \
             lscr.io/linuxserver/webgrabplus:latest \
             /bin/sh -c "
               DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
-              MONO_BIN=\$(find / -name mono -type f -executable | head -n 1)
-              if [ -n \"\$DOTNET_BIN\" ]; then
-                \$DOTNET_BIN \$(find /app -name WebGrab+Plus.dll | head -n 1) /config
-              elif [ -n \"\$MONO_BIN\" ]; then
-                \$MONO_BIN \$(find /app -name WebGrab+Plus.exe | head -n 1) /config
-              else
-                exit 1
-              fi
+              DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
+              # Running with 'nodate' to bypass system clock checks and force start
+              \$DOTNET_BIN \$DLL_PATH /config nodate
             "
 
       - name: Fix Permissions
         if: always()
         run: sudo chown -R $USER:$USER epg_db/ config/
+
+      - name: Debug - List Files
+        run: ls -R epg_db/
 
       - name: Validate and Update Status
         if: always()
@@ -69,7 +66,6 @@ jobs:
           d = {'country': country, 'status': status, 'last_run': str(datetime.datetime.now()), 'file_found': xml_exists}
           with open('epg_db/status.json', 'w') as f:
               json.dump(d, f)
-          if not xml_exists: print(f'--- ERROR: {xml_file} NOT CREATED ---')
           "
 
       - name: Commit and Push
