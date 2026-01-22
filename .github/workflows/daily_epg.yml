@@ -16,7 +16,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Create Directories
@@ -32,22 +32,39 @@ jobs:
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Run WebGrab+Plus (Direct .NET Mode)
+      - name: Run WebGrab+Plus (Universal Path Discovery)
         run: |
-          # This command points specifically to the app's DLL inside the container
           docker run --rm \
             -v $(pwd)/config:/config \
             -v $(pwd)/epg_db:/data \
             -e PUID=1000 -e PGID=1000 \
             lscr.io/linuxserver/webgrabplus:latest \
-            dotnet /app/wg++/WebGrab+Plus.dll /config
+            /bin/sh -c "
+              # Find the .NET or Mono executable
+              DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
+              MONO_BIN=\$(find / -name mono -type f -executable | head -n 1)
+              
+              if [ -n \"\$DOTNET_BIN\" ]; then
+                echo \"Using .NET runtime at \$DOTNET_BIN\"
+                DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
+                \$DOTNET_BIN \$DLL_PATH /config
+              elif [ -n \"\$MONO_BIN\" ]; then
+                echo \"Using Mono runtime at \$MONO_BIN\"
+                EXE_PATH=\$(find /app -name WebGrab+Plus.exe | head -n 1)
+                \$MONO_BIN \$EXE_PATH /config
+              else
+                echo \"Error: No runtime (dotnet or mono) found!\"
+                exit 1
+              fi
+            "
 
       - name: Update Status to Ready
+        if: success()
         run: |
-          # Creates status.json so your playlist generator knows the file is live
           python3 -c "import json, datetime; d={'country':'${{ env.COUNTRY }}', 'status':'ready', 'last_run': str(datetime.datetime.now())}; json.dump(d, open('epg_db/status.json', 'w'))"
 
       - name: Commit and Push
+        if: success()
         run: |
           git config --global user.name "EPG-Bot"
           git config --global user.email "bot@github.com"
