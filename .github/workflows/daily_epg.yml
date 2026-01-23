@@ -1,65 +1,140 @@
-name: Grab EPG (Canada)
+name: Dynamic Country EPG (WG++)
 
 on:
+  repository_dispatch:
+    types: [run_webgrab]
   workflow_dispatch:
-  schedule:
-    - cron: "0 3 * * *"   # daily at 03:00 UTC
+    inputs:
+      country:
+        description: 'Country Code (e.g., CA)'
+        required: true
+        default: 'CA'
 
 jobs:
   grab-epg:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y unzip wget git
+      # ── Ensure system networking works for WG++ ──
+      - name: Prepare networking (WG++ fix)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates
+          sudo update-ca-certificates
+          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '9.0.x'
+      # ── Download siteini.pack only if missing ──
+      - name: Fetch SiteIni Pack (only if not already in repo)
+        if: ${{ !hashFiles('config/siteini.pack/**') }}
+        uses: actions/checkout@v4
+        with:
+          repository: SilentButeo2/webgrabplus-siteinipack
+          path: siteini-temp
 
-    - name: Download and extract WebGrab++
-      run: |
-        mkdir -p .wg++
-        wget -O wg++.zip https://webgrabplus.github.io/download/wg++_linux64.zip
-        unzip wg++.zip -d .wg++
-        chmod +x .wg++/WebGrab++*
+      - name: Move and commit siteini.pack (once)
+        if: ${{ hashFiles('siteini-temp/siteini.pack/**') }}
+        run: |
+          mkdir -p config/siteini.pack
+          mv siteini-temp/siteini.pack/* config/siteini.pack/ || true
+          rm -rf siteini-temp
+          git config --global user.name "EPG Bot"
+          git config --global user.email "bot@github.com"
+          git add config/siteini.pack/
+          git commit -m "Added/updated siteini.pack (fetched once) [skip ci]" || echo "No changes"
+          git push || true
 
-    - name: Prepare WG++ runtime
-      run: |
-        cd .wg++
+      - name: Run Python Filter (generates config)
+        run: |
+          COUNTRY=${{ github.event.client_payload.country || inputs.country || 'CA' }}
+          python3 filter_wg_channels.py "$COUNTRY"
+          echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-        # Copy repo config into WG++ directory (FIXED PATH)
-        cp -r ../config/* ./
+      - name: Show generated config
+        run: cat config/WebGrab++.config.xml || true
 
-        # Ensure output folder exists
-        mkdir -p output
+      - name: Install .NET 9 + Download & Run WebGrab+Plus (v5.5)
+        run: |
+          # ---- .NET runtime ----
+          wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+          chmod +x dotnet-install.sh
+          ./dotnet-install.sh --channel 9.0 --install-dir ./dotnet
 
-    - name: Run WebGrab++
-      run: |
-        cd .wg++
-        ./WebGrab++ --config-file WebGrab++.config.xml
+          export DOTNET_ROOT=$(pwd)/dotnet
+          export PATH="$DOTNET_ROOT:$DOTNET_ROOT/tools:$PATH"
 
-    - name: Verify CA.xml
-      run: |
-        if [ ! -f .wg++/output/CA.xml ]; then
-          echo "ERROR: CA.xml not generated"
-          exit 1
-        fi
+          # ---- Critical WG++ networking flags ----
+          export DOTNET_SYSTEM_NET_DISABLEIPV6=1
+          export DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER=0
+          export DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP2SUPPORT=false
 
-    - name: Commit EPG output
-      run: |
-        git config user.name "github-actions"
-        git config user.email "actions@github.com"
+          dotnet --version
 
-        mkdir -p output
-        cp .wg++/output/CA.xml output/CA.xml
+          # ---- Download WG++ ----
+          wget --user-agent="Mozilla/5.0" \
+            -O wg_install.tar.gz \
+            https://webgrabplus.com/sites/default/files/download/SW/V5.5.0/WebGrabPlus_5.5_install.tar.gz
 
-        git add output/CA.xml
-        git commit -m "Update Canada EPG (CA.xml)" || echo "No changes"
-        git push
+          tar -zxvf wg_install.tar.gz
+          cd .wg++
+
+          # ---- Inject config ----
+          cp -r ../../config/* ./
+          mkdir -p siteini.pack
+          cp -r ../../config/siteini.pack/* siteini.pack/ || true
+
+          # ---- Force output file ----
+          mkdir -p output
+          sed -i '/<filename>/c\  <filename>output/'${COUNTRY}'.xml</filename>' WebGrab++.config.xml
+          grep filename WebGrab++.config.xml
+
+          # ---- Run WG++ ----
+          chmod +x run.net.sh
+          ./run.net.sh
+
+          # ---- Collect output ----
+          cp output/*.xml ../../epg_db/ || true
+          cp WebGrab*.log* ../../config/ || true
+
+      - name: Show logs
+        if: always()
+        run: |
+          cat .wg++/WebGrab*.log* 2>/dev/null || \
+          cat config/WebGrab*.log* 2>/dev/null || \
+          echo "No logs found"
+
+      - name: Verify EPG output
+        run: |
+          ls -lh epg_db/
+          if [ -s "epg_db/${COUNTRY}.xml" ]; then
+            echo "SUCCESS: ${COUNTRY}.xml generated"
+          else
+            echo "FAILED: No ${COUNTRY}.xml"
+            exit 1
+          fi
+
+      - name: Update status & commit
+        if: always()
+        run: |
+          python3 - << 'EOF'
+          import json, datetime, os
+          c = os.environ['COUNTRY']
+          f = f'epg_db/{c}.xml'
+          ok = os.path.exists(f) and os.path.getsize(f) > 1000
+          data = {
+            "country": c,
+            "status": "ready" if ok else "failed",
+            "last_run": datetime.datetime.now(datetime.UTC).isoformat(),
+            "file_found": ok,
+            "size": os.path.getsize(f) if ok else 0
+          }
+          json.dump(data, open("epg_db/status.json","w"), indent=2)
+          EOF
+
+          git add epg_db/
+          git commit -m "EPG ${COUNTRY} update $(date +%Y-%m-%d) [skip ci]" || echo "No changes"
+          git push || true
