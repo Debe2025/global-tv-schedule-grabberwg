@@ -17,140 +17,116 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout this repo
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Fetch SiteIni Pack (SilentButeo2)
+      # ── Download siteini.pack only if missing in repo ──
+      - name: Fetch SiteIni Pack (only if not already in repo)
+        if: steps.checkout.outputs.repository == 'main' && !hashFiles('config/siteini.pack/**')  # skip if already committed
         uses: actions/checkout@v4
         with:
           repository: SilentButeo2/webgrabplus-siteinipack
           path: siteini-temp
 
-      - name: Move siteini.pack contents to correct location
+      - name: Move and commit siteini.pack (once)
+        if: hashFiles('siteini-temp/siteini.pack/**')
         run: |
           mkdir -p config/siteini.pack
-          mv siteini-temp/siteini.pack/* config/siteini.pack/ 2>/dev/null || true
+          mv siteini-temp/siteini.pack/* config/siteini.pack/ || true
           rm -rf siteini-temp
-          echo "Siteini pack structure:"
-          ls -R config/siteini.pack | head -n 40 || true
+          git config --global user.name "EPG Bot"
+          git config --global user.email "bot@github.com"
+          git add config/siteini.pack/
+          git commit -m "Added/updated siteini.pack (fetched once) [skip ci]" || echo "siteini.pack already up-to-date or no changes"
+          git push || echo "siteini.pack push skipped"
 
-      - name: Run Python Filter
+      - name: Run Python Filter (generates config)
         run: |
           COUNTRY=${{ github.event.client_payload.country || inputs.country || 'CA' }}
           python3 filter_wg_channels.py "$COUNTRY"
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Show generated WebGrab config (debug)
-        run: |
-          echo "=== WebGrab++.config.xml contents ==="
-          cat config/WebGrab++.config.xml || true
-          echo "====================================="
+      - name: Show generated config
+        run: cat config/WebGrab++.config.xml || true
 
-      - name: Install .NET 9 runtime + Download & Run WebGrab+Plus natively
+      - name: Install .NET 9 + Download & Run WebGrab+Plus (v5.5)
         run: |
-          echo "Installing .NET 9 runtime (required for WG++ v5.5+)..."
+          # .NET 9 for WG++ v5.5+
           wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
           chmod +x dotnet-install.sh
           ./dotnet-install.sh --channel 9.0 --install-dir ./dotnet
           export DOTNET_ROOT=$(pwd)/dotnet
           export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
-          dotnet --version || echo ".NET version check failed"
+          dotnet --version
 
-          echo "Downloading WebGrab+Plus Linux installer with browser user-agent..."
-          wget --user-agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-            -O WebGrabPlus_5.5_install.tar.gz "https://webgrabplus.com/sites/default/files/download/SW/V5.5.0/WebGrabPlus_5.5_install.tar.gz" \
-            || { echo "Download failed"; exit 1; }
+          # Download WG++ installer (official link)
+          wget --user-agent="Mozilla/5.0" \
+            -O wg_install.tar.gz \
+            https://webgrabplus.com/sites/default/files/download/SW/V5.5.0/WebGrabPlus_5.5_install.tar.gz
 
-          echo "Downloaded file details:"
-          ls -lh WebGrabPlus_5.5_install.tar.gz || true
-          file WebGrabPlus_5.5_install.tar.gz || true
-          head -c 200 WebGrabPlus_5.5_install.tar.gz | strings || true
+          ls -lh wg_install.tar.gz
+          file wg_install.tar.gz
 
-          echo "Extracting archive verbosely..."
-          tar -zxvf WebGrabPlus_5.5_install.tar.gz || { echo "Extraction failed"; exit 1; }
+          tar -zxvf wg_install.tar.gz || { echo "Extraction failed"; exit 1; }
 
-          echo "Extracted contents (including hidden folders):"
-          ls -la . || true
+          # WG++ extracts to .wg++ (hidden)
+          cd .wg++ || { echo ".wg++ not found"; ls -la ..; exit 1; }
 
-          # Move to extracted .wg++ folder (official name)
-          if [ -d ".wg++" ]; then
-            cd .wg++
-          else
-            echo "No .wg++ folder found after extraction - check ls output above"
-            exit 1
-          fi
-
-          echo "Current dir: $(pwd)"
-          ls -la
-
-          echo "Copying configuration and siteini pack..."
-          cp -r ../../config/* ./ 2>/dev/null || true
+          # Copy your config + existing siteini.pack
+          cp -r ../../config/* ./
+          # siteini.pack already in repo → use it
           mkdir -p siteini.pack
-          cp -r ../../config/siteini.pack/* siteini.pack/ 2>/dev/null || true
+          cp -r ../../config/siteini.pack/* siteini.pack/ || true
 
-          echo "Overriding output filename..."
+          # Force output to local folder
           mkdir -p output
-          sed -i '/<filename>/c\  <filename>output/'${{ env.COUNTRY }}'.xml</filename>' WebGrab++.config.xml 2>/dev/null || true
-          sed -i "s|/data/.*\.xml|output/${{ env.COUNTRY }}.xml|g" WebGrab++.config.xml 2>/dev/null || true
-          grep filename WebGrab++.config.xml || echo "Filename override may have failed"
+          sed -i '/<filename>/c\  <filename>output/'${{ env.COUNTRY }}'.xml</filename>' WebGrab++.config.xml
+          grep filename WebGrab++.config.xml
 
-          echo "Running install.sh if present..."
-          if [ -f "install.sh" ]; then
-            chmod +x install.sh
-            ./install.sh || echo "install.sh ran with code $?"
-          else
-            echo "No install.sh found"
-          fi
+          # Run install if exists (usually not needed in CI)
+          [ -f install.sh ] && chmod +x install.sh && ./install.sh || true
 
-          echo "Starting WebGrab+Plus via run.net.sh..."
-          if [ -f "run.net.sh" ]; then
+          # Run WG++
+          echo "Running WebGrab+Plus..."
+          if [ -f run.net.sh ]; then
             chmod +x run.net.sh
-            ./run.net.sh || echo "run.net.sh exited with code $?"
+            ./run.net.sh || echo "WG++ exit code: $?"
           else
-            echo "No run.net.sh found - trying direct dotnet..."
-            dotnet bin.net/WebGrab+Plus.dll . || echo "Direct dotnet exited with code $?"
+            dotnet bin.net/WebGrab+Plus.dll . || echo "Direct run exit code: $?"
           fi
 
-          echo "Copying results back..."
-          ls -la output/*.xml 2>/dev/null || true
-          cp output/*.xml ../../epg_db/ 2>/dev/null || true
-          cp WebGrab*.log* ../../config/ 2>/dev/null || true
+          # Copy output back
+          cp output/*.xml ../../epg_db/ || true
+          cp WebGrab*.log* ../../config/ || true
 
-      - name: Show WebGrab logs
+      - name: Show logs
         if: always()
-        run: |
-          echo "=== WebGrab++ log files ==="
-          ls -la config/ | grep -i "log\|txt" || echo "No logs"
-          cat config/WebGrab*.log* 2>/dev/null || echo "No readable logs"
+        run: cat .wg++/WebGrab*.log* 2>/dev/null || cat config/WebGrab*.log* 2>/dev/null || echo "No logs found"
 
-      - name: Fix Permissions
+      - name: Fix permissions
         if: always()
         run: sudo chown -R $(whoami) epg_db/ config/ || true
 
-      - name: Verify Output
+      - name: Verify EPG output
         run: |
-          echo "Checking epg_db for ${{ env.COUNTRY }}.xml..."
-          ls -lh epg_db/ || true
+          ls -lh epg_db/
           if [ -f "epg_db/${{ env.COUNTRY }}.xml" ] && [ -s "epg_db/${{ env.COUNTRY }}.xml" ]; then
-            echo "✅ SUCCESS"
-            du -h epg_db/${{ env.COUNTRY }}.xml
+            echo "SUCCESS: ${{ env.COUNTRY }}.xml ready ($(du -h epg_db/${{ env.COUNTRY }}.xml | cut -f1))"
           else
-            echo "❌ FAILED"
+            echo "FAILED: No ${{ env.COUNTRY }}.xml"
           fi
 
-      - name: Update status.json & Commit
+      - name: Update status & commit
         if: always()
         run: |
           python3 -c "
           import json, datetime, os
-          country = '${{ env.COUNTRY }}'
-          xml_file = f'epg_db/{country}.xml'
-          exists = os.path.exists(xml_file) and os.path.getsize(xml_file) > 1000
-          d = {'country': country, 'status': 'ready' if exists else 'failed', 'last_run': datetime.datetime.now(datetime.UTC).isoformat(), 'file_found': exists, 'file_size_bytes': os.path.getsize(xml_file) if exists else 0}
-          with open('epg_db/status.json', 'w') as f: json.dump(d, f, indent=2)
+          c = '${{ env.COUNTRY }}'
+          f = f'epg_db/{c}.xml'
+          e = os.path.exists(f) and os.path.getsize(f) > 1000
+          d = {'country':c, 'status':'ready' if e else 'failed', 'last_run':datetime.datetime.now(datetime.UTC).isoformat(), 'file_found':e, 'size':os.path.getsize(f) if e else 0}
+          json.dump(d, open('epg_db/status.json','w'), indent=2)
           "
-          git config --global user.name "EPG Bot"
-          git config --global user.email "bot@github.com"
           git add epg_db/
-          git commit -m "EPG update for ${{ env.COUNTRY }} [skip ci]" || echo "No commit"
-          git push || echo "Push skipped"
+          git commit -m "EPG ${{ env.COUNTRY }} update $(date +%Y-%m-%d) [skip ci]" || echo "No changes"
+          git push || true
