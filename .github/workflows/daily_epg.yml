@@ -20,16 +20,24 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # ── Download siteini.pack only if missing in repo ──
+      # ── Ensure system networking works for WG++ ──
+      - name: Prepare networking (WG++ fix)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates
+          sudo update-ca-certificates
+          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+      # ── Download siteini.pack only if missing ──
       - name: Fetch SiteIni Pack (only if not already in repo)
-        if: steps.checkout.outputs.repository == 'main' && !hashFiles('config/siteini.pack/**')  # skip if already committed
+        if: ${{ !hashFiles('config/siteini.pack/**') }}
         uses: actions/checkout@v4
         with:
           repository: SilentButeo2/webgrabplus-siteinipack
           path: siteini-temp
 
       - name: Move and commit siteini.pack (once)
-        if: hashFiles('siteini-temp/siteini.pack/**')
+        if: ${{ hashFiles('siteini-temp/siteini.pack/**') }}
         run: |
           mkdir -p config/siteini.pack
           mv siteini-temp/siteini.pack/* config/siteini.pack/ || true
@@ -37,8 +45,8 @@ jobs:
           git config --global user.name "EPG Bot"
           git config --global user.email "bot@github.com"
           git add config/siteini.pack/
-          git commit -m "Added/updated siteini.pack (fetched once) [skip ci]" || echo "siteini.pack already up-to-date or no changes"
-          git push || echo "siteini.pack push skipped"
+          git commit -m "Added/updated siteini.pack (fetched once) [skip ci]" || echo "No changes"
+          git push || true
 
       - name: Run Python Filter (generates config)
         run: |
@@ -51,82 +59,82 @@ jobs:
 
       - name: Install .NET 9 + Download & Run WebGrab+Plus (v5.5)
         run: |
-          # .NET 9 for WG++ v5.5+
+          # ---- .NET runtime ----
           wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
           chmod +x dotnet-install.sh
           ./dotnet-install.sh --channel 9.0 --install-dir ./dotnet
+
           export DOTNET_ROOT=$(pwd)/dotnet
-          export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
+          export PATH="$DOTNET_ROOT:$DOTNET_ROOT/tools:$PATH"
+
+          # ---- Critical WG++ networking flags ----
+          export DOTNET_SYSTEM_NET_DISABLEIPV6=1
+          export DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER=0
+          export DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP2SUPPORT=false
+
           dotnet --version
 
-          # Download WG++ installer (official link)
+          # ---- Download WG++ ----
           wget --user-agent="Mozilla/5.0" \
             -O wg_install.tar.gz \
             https://webgrabplus.com/sites/default/files/download/SW/V5.5.0/WebGrabPlus_5.5_install.tar.gz
 
-          ls -lh wg_install.tar.gz
-          file wg_install.tar.gz
+          tar -zxvf wg_install.tar.gz
+          cd .wg++
 
-          tar -zxvf wg_install.tar.gz || { echo "Extraction failed"; exit 1; }
-
-          # WG++ extracts to .wg++ (hidden)
-          cd .wg++ || { echo ".wg++ not found"; ls -la ..; exit 1; }
-
-          # Copy your config + existing siteini.pack
+          # ---- Inject config ----
           cp -r ../../config/* ./
-          # siteini.pack already in repo → use it
           mkdir -p siteini.pack
           cp -r ../../config/siteini.pack/* siteini.pack/ || true
 
-          # Force output to local folder
+          # ---- Force output file ----
           mkdir -p output
-          sed -i '/<filename>/c\  <filename>output/'${{ env.COUNTRY }}'.xml</filename>' WebGrab++.config.xml
+          sed -i '/<filename>/c\  <filename>output/'${COUNTRY}'.xml</filename>' WebGrab++.config.xml
           grep filename WebGrab++.config.xml
 
-          # Run install if exists (usually not needed in CI)
-          [ -f install.sh ] && chmod +x install.sh && ./install.sh || true
+          # ---- Run WG++ ----
+          chmod +x run.net.sh
+          ./run.net.sh
 
-          # Run WG++
-          echo "Running WebGrab+Plus..."
-          if [ -f run.net.sh ]; then
-            chmod +x run.net.sh
-            ./run.net.sh || echo "WG++ exit code: $?"
-          else
-            dotnet bin.net/WebGrab+Plus.dll . || echo "Direct run exit code: $?"
-          fi
-
-          # Copy output back
+          # ---- Collect output ----
           cp output/*.xml ../../epg_db/ || true
           cp WebGrab*.log* ../../config/ || true
 
       - name: Show logs
         if: always()
-        run: cat .wg++/WebGrab*.log* 2>/dev/null || cat config/WebGrab*.log* 2>/dev/null || echo "No logs found"
-
-      - name: Fix permissions
-        if: always()
-        run: sudo chown -R $(whoami) epg_db/ config/ || true
+        run: |
+          cat .wg++/WebGrab*.log* 2>/dev/null || \
+          cat config/WebGrab*.log* 2>/dev/null || \
+          echo "No logs found"
 
       - name: Verify EPG output
         run: |
           ls -lh epg_db/
-          if [ -f "epg_db/${{ env.COUNTRY }}.xml" ] && [ -s "epg_db/${{ env.COUNTRY }}.xml" ]; then
-            echo "SUCCESS: ${{ env.COUNTRY }}.xml ready ($(du -h epg_db/${{ env.COUNTRY }}.xml | cut -f1))"
+          if [ -s "epg_db/${COUNTRY}.xml" ]; then
+            echo "SUCCESS: ${COUNTRY}.xml generated"
           else
-            echo "FAILED: No ${{ env.COUNTRY }}.xml"
+            echo "FAILED: No ${COUNTRY}.xml"
+            exit 1
           fi
 
       - name: Update status & commit
         if: always()
         run: |
-          python3 -c "
+          python3 - << 'EOF'
           import json, datetime, os
-          c = '${{ env.COUNTRY }}'
+          c = os.environ['COUNTRY']
           f = f'epg_db/{c}.xml'
-          e = os.path.exists(f) and os.path.getsize(f) > 1000
-          d = {'country':c, 'status':'ready' if e else 'failed', 'last_run':datetime.datetime.now(datetime.UTC).isoformat(), 'file_found':e, 'size':os.path.getsize(f) if e else 0}
-          json.dump(d, open('epg_db/status.json','w'), indent=2)
-          "
+          ok = os.path.exists(f) and os.path.getsize(f) > 1000
+          data = {
+            "country": c,
+            "status": "ready" if ok else "failed",
+            "last_run": datetime.datetime.now(datetime.UTC).isoformat(),
+            "file_found": ok,
+            "size": os.path.getsize(f) if ok else 0
+          }
+          json.dump(data, open("epg_db/status.json","w"), indent=2)
+          EOF
+
           git add epg_db/
-          git commit -m "EPG ${{ env.COUNTRY }} update $(date +%Y-%m-%d) [skip ci]" || echo "No changes"
+          git commit -m "EPG ${COUNTRY} update $(date +%Y-%m-%d) [skip ci]" || echo "No changes"
           git push || true
