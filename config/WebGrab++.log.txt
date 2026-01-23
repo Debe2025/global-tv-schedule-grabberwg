@@ -1,0 +1,17 @@
+﻿[        ] 
+[        ]            WebGrab+Plus/w MDB & REX Postprocess -- version  V5.5.0.0            
+[        ] 
+[        ]                                 Jan van Straaten                                
+[        ]                              Francis De Paemeleere                              
+[        ] 
+[        ]  thanks to Paul Weterings, Mat8861, Blackbear199 and all the contributing users 
+[        ] --------------------------------------------------------------------------------
+[        ] 
+[        ] Job started at 23/01/2026 05:11:53
+[  Debug ] 
+[  Debug ] Running  on: Unix 6.11.0.1018
+[  Debug ] Environment: 9.0.12
+[        ] 
+[  Info  ] Checking Internet ..
+[Error   ] No internet !! Cannot run without it
+[  Info  ] WG++ exit ..
