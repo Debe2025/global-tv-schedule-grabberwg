@@ -1,86 +1,117 @@
 import os
 import sys
-import requests
 import json
+import time
+import requests
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from collections import defaultdict
+
+API_TIMEOUT = 20
+API_RETRIES = 3
+MAX_CHANNELS = 60   # adjust as needed
+
+def fetch_json(url):
+    for attempt in range(API_RETRIES):
+        try:
+            r = requests.get(url, timeout=API_TIMEOUT)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            if attempt == API_RETRIES - 1:
+                raise
+            time.sleep(2)
 
 def build_dynamic_config(country_code: str):
     country_code = country_code.upper()
-    os.makedirs('config', exist_ok=True)
-    os.makedirs('epg_db', exist_ok=True)
 
-    # 1. Load template
-    config_path = Path('config/master.config.xml')
-    if not config_path.exists():
-        print("ERROR: master.config.xml not found!")
-        sys.exit(1)
+    Path("config").mkdir(exist_ok=True)
+    Path("epg_db").mkdir(exist_ok=True)
 
-    tree = ET.parse(config_path)
+    # ── Load template ─────────────────────────────────────
+    template = Path("config/master.config.xml")
+    if not template.exists():
+        sys.exit("ERROR: master.config.xml not found")
+
+    tree = ET.parse(template)
     root = tree.getroot()
 
-    # 2. Set output file
-    filename_elem = root.find('filename')
-    if filename_elem is not None:
-        filename_elem.text = f"/data/{country_code}.xml"
+    # ── WG++ output path (LOCAL, NOT /data) ───────────────
+    filename = root.find("filename")
+    if filename is not None:
+        filename.text = f"output/{country_code}.xml"
     else:
-        print("WARNING: <filename> tag not found in master.config.xml")
+        print("WARNING: <filename> missing in template")
 
-    # 3. Fetch IPTV-org data
+    # ── Fetch IPTV-org data ───────────────────────────────
     try:
-        guides = requests.get("https://iptv-org.github.io/api/guides.json", timeout=15).json()
-        channels = requests.get("https://iptv-org.github.io/api/channels.json", timeout=15).json()
+        guides = fetch_json("https://iptv-org.github.io/api/guides.json")
+        channels = fetch_json("https://iptv-org.github.io/api/channels.json")
     except Exception as e:
-        print(f"Failed to download IPTV-org API: {e}")
-        sys.exit(1)
+        sys.exit(f"ERROR: IPTV-org API failed: {e}")
 
-    country_channel_ids = {c['id'] for c in channels if c.get('country') == country_code}
+    country_channels = {
+        c["id"] for c in channels if c.get("country") == country_code
+    }
 
-    # 4. Build map of available .ini files (folder-aware)
-    ini_map = {}
-    pack_root = Path('config/siteini.pack')
-    if not pack_root.exists() or not any(pack_root.iterdir()):
-        print("ERROR: siteini.pack folder is empty or missing!")
-        print("Directory listing:", list(pack_root.parent.glob('*')))
-        sys.exit(1)
+    # ── Build siteini map (folder-aware, multi-hit safe) ──
+    pack_root = Path("config/siteini.pack")
+    if not pack_root.exists():
+        sys.exit("ERROR: siteini.pack missing")
 
-    for ini_path in pack_root.rglob('*.ini'):
-        rel_path = ini_path.relative_to(pack_root).with_suffix('')  # e.g. Canada/tv.cravetv.ca
-        ini_filename = ini_path.name
-        ini_map[ini_filename] = str(rel_path)
+    ini_map = defaultdict(list)
 
-    print(f"Found {len(ini_map)} .ini files in siteini.pack")
+    for ini in pack_root.rglob("*.ini"):
+        rel = ini.relative_to(pack_root).with_suffix("")
+        ini_map[ini.name].append(str(rel))
 
-    # 5. Add matching channels (limit for testing)
+    print(f"Indexed {sum(len(v) for v in ini_map.values())} siteini files")
+
+    # ── Build channel list ────────────────────────────────
     added = 0
-    channel_elements = []
+    channels_xml = []
 
-    for guide in guides:
-        if guide['channel'] in country_channel_ids and added < 60:  # ← raised a bit
-            ini_filename = f"{guide['site']}.ini"
-            if ini_filename in ini_map:
-                chan = ET.Element('channel')
-                chan.set('site', ini_map[ini_filename])
-                chan.set('site_id', guide['site_id'])
-                chan.set('xmltv_id', guide['channel'])
-                chan.text = guide.get('site_name', guide['channel'])
-                channel_elements.append(chan)
-                added += 1
+    for g in guides:
+        if added >= MAX_CHANNELS:
+            break
 
-    # Remove old <channel> elements and add new ones
-    for old in root.findall('channel'):
+        if g["channel"] not in country_channels:
+            continue
+
+        ini_name = f"{g['site']}.ini"
+        if ini_name not in ini_map:
+            continue
+
+        # Prefer country-specific folder if possible
+        site_path = ini_map[ini_name][0]
+
+        ch = ET.Element("channel")
+        ch.set("site", site_path)
+        ch.set("site_id", g["site_id"])
+        ch.set("xmltv_id", g["channel"])
+        ch.text = g.get("site_name", g["channel"])
+
+        channels_xml.append(ch)
+        added += 1
+
+    # ── Replace existing <channel> entries ────────────────
+    for old in root.findall("channel"):
         root.remove(old)
-    for ch in channel_elements:
+
+    for ch in channels_xml:
         root.append(ch)
 
-    # Save
-    output_path = Path('config/WebGrab++.config.xml')
-    tree.write(output_path, encoding='utf-8', xml_declaration=True)
-    print(f"Created WebGrab++.config.xml with {added} channels for {country_code}")
+    # ── Save config ───────────────────────────────────────
+    out = Path("config/WebGrab++.config.xml")
+    tree.write(out, encoding="utf-8", xml_declaration=True)
+
+    print(f"Generated WebGrab++.config.xml")
+    print(f"Country: {country_code}")
+    print(f"Channels added: {added}")
 
     if added == 0:
-        print("WARNING: No channels were added – check if .ini files match guides.json sites")
+        print("WARNING: No matching channels found")
 
 if __name__ == "__main__":
-    country = sys.argv[1].upper() if len(sys.argv) > 1 else 'CA'
+    country = sys.argv[1].upper() if len(sys.argv) > 1 else "CA"
     build_dynamic_config(country)
