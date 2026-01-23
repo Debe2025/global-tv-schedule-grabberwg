@@ -83,7 +83,7 @@ jobs:
           cd .wg++
 
           # ---- Inject config ----
-          cp -r ../../config/* ./
+          cp -r ../config/* ./
           mkdir -p siteini.pack
           cp -r ../../config/siteini.pack/* siteini.pack/ || true
 
