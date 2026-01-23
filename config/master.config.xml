@@ -1,20 +1,11 @@
 <?xml version="1.0"?>
 <settings>
-  <!-- Template only. filter_wg_channels.py will overwrite filename -->
-  <filename>output/guide.xml</filename>
-
-  <!-- new + nocache -->
+  <filename>output/CA.xml</filename>
   <mode>n#</mode>
-
-  <!-- siteini.pack is copied into .wg++ at runtime -->
   <siteini>siteini.pack</siteini>
-
   <logging>on</logging>
-
   <retry time-out="5" skip="y">4</retry>
-
-  <timespan days="2"/>
-
-  <!-- force update -->
+  <timespan days="2"></timespan>
   <update>f</update>
 </settings>
+
