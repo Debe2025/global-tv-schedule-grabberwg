@@ -43,7 +43,7 @@ jobs:
       - name: Show config
         run: ls -lh config/ && cat config/WebGrab++.config.xml
 
-     # 4. Install .NET 6 + Download WG++
+      # 4. Install .NET 6 + Download WG++
       - name: Install .NET 6 and WG++
         run: |
           wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
@@ -52,19 +52,18 @@ jobs:
           export DOTNET_ROOT=$(pwd)/dotnet
           export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
           dotnet --version
-      
+
           wget -O wg_install.tar.gz \
             https://webgrabplus.com/sites/default/files/download/SW/V5.5.0/WebGrabPlus_5.5_install.tar.gz
           tar -zxvf wg_install.tar.gz
-      
+
           # Auto-detect extracted folder
           EXTRACTED=$(tar -tf wg_install.tar.gz | head -1 | cut -d/ -f1)
-      
+
           # Only rename if needed
           if [ "$EXTRACTED" != ".wg++" ]; then
             mv "$EXTRACTED" .wg++
           fi
-
 
       # 5. Prepare WG++ environment
       - name: Prepare WG++ environment
@@ -86,10 +85,10 @@ jobs:
         run: |
           cd .wg++
 
-          # Force IPv4 preference (fixes WG++ connectivity test)
+          # Force IPv4 so WG++ connectivity test works
           echo "precedence ::ffff:0:0/96  100" | sudo tee -a /etc/gai.conf
 
-          # Skip WG++ internal internet test (known bug)
+          # Skip WG++ internal internet test (known bug on GitHub runners)
           export WG_NO_NET_TEST=1
 
           [ -f install.sh ] && chmod +x install.sh && ./install.sh || true
