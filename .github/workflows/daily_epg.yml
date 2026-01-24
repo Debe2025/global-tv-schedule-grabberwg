@@ -1,17 +1,22 @@
 name: Dynamic Country EPG (WG++)
 on:
+  schedule:
+    - cron: '0 3 * * *'
   repository_dispatch:
-    types: [run_webgrab]
+    types: [run_webgrab] # This listens for the external request
   workflow_dispatch:
     inputs:
       country:
-        description: 'Country Code (e.g., CA)'
+        description: 'Country Code'
         required: true
         default: 'CA'
 
 jobs:
   grab-epg:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout EPG Repo
         uses: actions/checkout@v4
@@ -22,11 +27,20 @@ jobs:
           repository: SilentButeo2/webgrabplus-siteinipack
           path: config/siteini.pack
 
-      - name: Run Python Filter
+      - name: Set Dynamic Country
         run: |
-          COUNTRY=${{ github.event.client_payload.country || github.event.inputs.country }}
-          python3 filter_wg_channels.py $COUNTRY
-          echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
+          # 1. Check client_payload (from API) 
+          # 2. Check inputs (from Manual UI)
+          # 3. Default to CA
+          REQ_COUNTRY="${{ github.event.client_payload.country }}"
+          INPUT_COUNTRY="${{ github.event.inputs.country }}"
+          FINAL_COUNTRY=${REQ_COUNTRY:-${INPUT_COUNTRY:-CA}}
+          
+          echo "COUNTRY=$FINAL_COUNTRY" >> $GITHUB_ENV
+          echo "Processing Country: $FINAL_COUNTRY"
+
+      - name: Run Python Filter
+        run: python3 filter_wg_channels.py ${{ env.COUNTRY }}
 
       - name: Run WebGrab+Plus (Force Bypass)
         run: |
@@ -36,24 +50,25 @@ jobs:
             -v $(pwd)/epg_db:/data \
             -e PUID=1000 -e PGID=1000 \
             lscr.io/linuxserver/webgrabplus:latest \
-            /bin/sh -c "
-              DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
-              DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
-              # THE MAGIC FIX: We pass /config AND 'skipcheck'
-              \$DOTNET_BIN \$DLL_PATH /config skipcheck
-            "
+            /bin/sh -c "dotnet /app/WebGrab+Plus.dll /config skipcheck"
 
-      - name: Fix Permissions and Verify
+      - name: Fix Permissions
+        if: always()
+        run: sudo chown -R $USER:$USER epg_db/ config/
+
+      - name: Validate and Push
         if: always()
         run: |
-          sudo chown -R $USER:$USER epg_db/
-          ls -lh epg_db/
-
-      - name: Commit and Push
-        if: success()
-        run: |
+          python3 -c "
+          import json, datetime, os
+          country = '${{ env.COUNTRY }}'
+          xml_file = f'epg_db/{country}.xml'
+          exists = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
+          d = {'country': country, 'status': 'ready' if exists else 'failed', 'last_run': str(datetime.datetime.now()), 'file_found': exists}
+          json.dump(d, open('epg_db/status.json', 'w'))
+          "
           git config --global user.name "EPG-Bot"
           git config --global user.email "bot@github.com"
           git add epg_db/
-          git commit -m "Updated EPG for ${{ env.COUNTRY }}" || exit 0
+          git commit -m "Updated EPG for ${{ env.COUNTRY }} [skip ci]" || exit 0
           git push
