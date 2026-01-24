@@ -37,7 +37,13 @@ jobs:
       - name: Run Python Filter
         run: python3 filter_wg_channels.py ${{ env.COUNTRY }}
 
-      - name: Run WebGrab+Plus (Alpine Fix)
+      # --- DEBUG STEP: LOCATE THE BINARY ---
+      - name: Inspect Container Structure
+        run: |
+          echo "Listing all executable files in /app to find WebGrab binary..."
+          docker run --rm lscr.io/linuxserver/webgrabplus:latest find /app -executable -type f
+
+      - name: Run WebGrab+Plus (Absolute Path Fix)
         run: |
           docker run --rm \
             --network="host" \
@@ -45,7 +51,7 @@ jobs:
             -v $(pwd)/epg_db:/data \
             -e PUID=1000 -e PGID=1000 \
             lscr.io/linuxserver/webgrabplus:latest \
-            /bin/sh -c "WebGrab+Plus /config skipcheck"
+            /bin/sh -c "/app/sw/WebGrab+Plus /config skipcheck"
 
       - name: Fix Permissions
         if: always()
@@ -61,20 +67,19 @@ jobs:
           status_file = 'epg_db/status.json'
           xml_file = f'epg_db/{country}.xml'
           
-          # Check if XML exists and is not empty
           success = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
           
-          # Load existing data or create new dict
+          data = {}
           if os.path.exists(status_file):
-              with open(status_file, 'r') as f:
-                  data = json.load(f)
-          else:
-              data = {}
+              try:
+                  with open(status_file, 'r') as f:
+                      data = json.load(f)
+              except:
+                  data = {}
 
-          # Update specific country entry
           data[country] = {
               'status': 'ready' if success else 'failed',
-              'last_run': str(datetime.datetime.now()),
+              'last_run': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
               'file_size': f'{os.path.getsize(xml_file) // 1024} KB' if success else '0 KB'
           }
 
