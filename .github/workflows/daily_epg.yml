@@ -37,13 +37,7 @@ jobs:
       - name: Run Python Filter
         run: python3 filter_wg_channels.py ${{ env.COUNTRY }}
 
-      # --- DEBUG STEP: LOCATE THE BINARY ---
-      - name: Inspect Container Structure
-        run: |
-          echo "Listing all executable files in /app to find WebGrab binary..."
-          docker run --rm lscr.io/linuxserver/webgrabplus:latest find /app -executable -type f
-
-      - name: Run WebGrab+Plus (Absolute Path Fix)
+      - name: Run WebGrab+Plus (Dynamic Executable Search)
         run: |
           docker run --rm \
             --network="host" \
@@ -51,7 +45,12 @@ jobs:
             -v $(pwd)/epg_db:/data \
             -e PUID=1000 -e PGID=1000 \
             lscr.io/linuxserver/webgrabplus:latest \
-            /bin/sh -c "/app/sw/WebGrab+Plus /config skipcheck"
+            /bin/sh -c "
+              DOTNET_PATH=\$(which dotnet || find / -name dotnet -type f -executable | head -n 1)
+              DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
+              echo 'Executing: \$DOTNET_PATH \$DLL_PATH /config skipcheck'
+              \$DOTNET_PATH \$DLL_PATH /config skipcheck
+            "
 
       - name: Fix Permissions
         if: always()
@@ -62,29 +61,21 @@ jobs:
         run: |
           python3 -c "
           import json, datetime, os
-          
           country = '${{ env.COUNTRY }}'
           status_file = 'epg_db/status.json'
           xml_file = f'epg_db/{country}.xml'
-          
           success = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
-          
           data = {}
           if os.path.exists(status_file):
               try:
-                  with open(status_file, 'r') as f:
-                      data = json.load(f)
-              except:
-                  data = {}
-
+                  with open(status_file, 'r') as f: data = json.load(f)
+              except: data = {}
           data[country] = {
               'status': 'ready' if success else 'failed',
               'last_run': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
               'file_size': f'{os.path.getsize(xml_file) // 1024} KB' if success else '0 KB'
           }
-
-          with open(status_file, 'w') as f:
-              json.dump(data, f, indent=4)
+          with open(status_file, 'w') as f: json.dump(data, f, indent=4)
           "
 
       - name: Commit and Push
