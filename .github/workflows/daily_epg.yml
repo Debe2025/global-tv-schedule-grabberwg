@@ -3,7 +3,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   repository_dispatch:
-    types: [run_webgrab] # This listens for the external request
+    types: [run_webgrab]
   workflow_dispatch:
     inputs:
       country:
@@ -29,20 +29,15 @@ jobs:
 
       - name: Set Dynamic Country
         run: |
-          # 1. Check client_payload (from API) 
-          # 2. Check inputs (from Manual UI)
-          # 3. Default to CA
           REQ_COUNTRY="${{ github.event.client_payload.country }}"
           INPUT_COUNTRY="${{ github.event.inputs.country }}"
           FINAL_COUNTRY=${REQ_COUNTRY:-${INPUT_COUNTRY:-CA}}
-          
           echo "COUNTRY=$FINAL_COUNTRY" >> $GITHUB_ENV
-          echo "Processing Country: $FINAL_COUNTRY"
 
       - name: Run Python Filter
         run: python3 filter_wg_channels.py ${{ env.COUNTRY }}
 
-      - name: Run WebGrab+Plus (Force Bypass)
+      - name: Run WebGrab+Plus (Alpine Fix)
         run: |
           docker run --rm \
             --network="host" \
@@ -50,23 +45,46 @@ jobs:
             -v $(pwd)/epg_db:/data \
             -e PUID=1000 -e PGID=1000 \
             lscr.io/linuxserver/webgrabplus:latest \
-            /bin/sh -c "dotnet /app/WebGrab+Plus.dll /config skipcheck"
+            /bin/sh -c "WebGrab+Plus /config skipcheck"
 
       - name: Fix Permissions
         if: always()
         run: sudo chown -R $USER:$USER epg_db/ config/
 
-      - name: Validate and Push
+      - name: Update Multi-Country Status
         if: always()
         run: |
           python3 -c "
           import json, datetime, os
+          
           country = '${{ env.COUNTRY }}'
+          status_file = 'epg_db/status.json'
           xml_file = f'epg_db/{country}.xml'
-          exists = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
-          d = {'country': country, 'status': 'ready' if exists else 'failed', 'last_run': str(datetime.datetime.now()), 'file_found': exists}
-          json.dump(d, open('epg_db/status.json', 'w'))
+          
+          # Check if XML exists and is not empty
+          success = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
+          
+          # Load existing data or create new dict
+          if os.path.exists(status_file):
+              with open(status_file, 'r') as f:
+                  data = json.load(f)
+          else:
+              data = {}
+
+          # Update specific country entry
+          data[country] = {
+              'status': 'ready' if success else 'failed',
+              'last_run': str(datetime.datetime.now()),
+              'file_size': f'{os.path.getsize(xml_file) // 1024} KB' if success else '0 KB'
+          }
+
+          with open(status_file, 'w') as f:
+              json.dump(data, f, indent=4)
           "
+
+      - name: Commit and Push
+        if: success()
+        run: |
           git config --global user.name "EPG-Bot"
           git config --global user.email "bot@github.com"
           git add epg_db/
