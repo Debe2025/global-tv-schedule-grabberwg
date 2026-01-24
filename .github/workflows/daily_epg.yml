@@ -28,9 +28,8 @@ jobs:
           python3 filter_wg_channels.py $COUNTRY
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
-      - name: Run WebGrab+Plus (Bypass Mode)
+      - name: Run WebGrab+Plus (Force Bypass)
         run: |
-          # We use --network="host" and the 'nodate' flag to force execution
           docker run --rm \
             --network="host" \
             -v $(pwd)/config:/config \
@@ -40,8 +39,8 @@ jobs:
             /bin/sh -c "
               DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
               DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
-              # 'nodate' bypasses the initial internet-based time sync check
-              \$DOTNET_BIN \$DLL_PATH /config nodate
+              # THE MAGIC FIX: We pass /config AND 'skipcheck'
+              \$DOTNET_BIN \$DLL_PATH /config skipcheck
             "
 
       - name: Fix Permissions and Verify
