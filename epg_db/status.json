@@ -1,7 +1,1 @@
-{
-  "country": "CA",
-  "status": "failed",
-  "last_run": "2026-01-23T02:37:46.045790+00:00",
-  "file_found": false,
-  "size": 0
-}
+{"country": "CA", "status": "failed", "last_run": "2026-01-24 22:37:00.069535", "file_found": false}
