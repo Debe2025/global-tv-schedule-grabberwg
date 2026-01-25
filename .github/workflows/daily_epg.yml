@@ -69,73 +69,24 @@ jobs:
           fi
           sed -i '/<filename>/c\  <filename>output/'${{ env.COUNTRY }}'.xml</filename>' WebGrab++.config.xml
 
-      # NEW: Test network connectivity
-      - name: Test network connectivity
-        run: |
-          echo "========================================="
-          echo "Testing network connectivity..."
-          echo "========================================="
-          ping -c 4 8.8.8.8 || echo "Ping to 8.8.8.8 failed"
-          ping -c 4 google.com || echo "Ping to google.com failed"
-          curl -I https://www.google.com || echo "Curl to google.com failed"
-          echo "========================================="
-          echo "Network test complete"
-          echo "========================================="
-
-      # 6. Run WG++ (with environment variables and better error handling)
+      # 6. Run WG++ (with .NET environment fixes)
       - name: Run WebGrab+Plus
         env:
           DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER: 0
           DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1
         run: |
           cd .wg++
-          
-          # Set up .NET environment
           export DOTNET_ROOT=$(pwd)/../dotnet
           export PATH="$PATH:$DOTNET_ROOT"
-          
-          # Show what we're working with
-          echo "========================================="
-          echo "WebGrab++ Configuration:"
-          echo "========================================="
-          cat WebGrab++.config.xml
-          echo "========================================="
-          
-          # Install if needed
           [ -f install.sh ] && chmod +x install.sh && ./install.sh || true
-          
-          # Run WebGrab+Plus with full output
           chmod +x run.net.sh
-          echo "========================================="
-          echo "Starting WebGrab+Plus..."
-          echo "========================================="
-          ./run.net.sh 2>&1 | tee wgpp_run.log || EXIT_CODE=$?
-          
-          # Show logs regardless of success/failure
-          echo "========================================="
-          echo "WebGrab+Plus Runtime Log:"
-          echo "========================================="
-          cat wgpp_run.log || true
-          
-          echo "========================================="
-          echo "WebGrab+Plus Log Files:"
-          echo "========================================="
-          cat WebGrab*.log* 2>/dev/null || echo "No log files found"
-          
-          # Exit with original code if it failed
-          if [ ! -z "$EXIT_CODE" ]; then
-            echo "========================================="
-            echo "WebGrab+Plus exited with code: $EXIT_CODE"
-            echo "========================================="
-            exit $EXIT_CODE
-          fi
+          ./run.net.sh || echo "WG++ exit code: $?"
 
       # 7. Copy output back
       - name: Copy WG++ output
         run: |
           cp .wg++/output/*.xml epg_db/ || true
           cp .wg++/WebGrab*.log* config/ || true
-          cp .wg++/wgpp_run.log config/ || true
 
       # 8. Verify and commit
       - name: Commit EPG
