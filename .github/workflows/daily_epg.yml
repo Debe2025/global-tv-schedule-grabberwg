@@ -1,13 +1,12 @@
 name: Dynamic Country EPG (WG++)
+
 on:
-  schedule:
-    - cron: '0 3 * * *'
   repository_dispatch:
     types: [run_webgrab]
   workflow_dispatch:
     inputs:
       country:
-        description: 'Country Code'
+        description: 'Country Code (e.g., CA)'
         required: true
         default: 'CA'
 
@@ -18,77 +17,117 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout Repo
+      - name: Checkout this repo (includes siteini.pack)
         uses: actions/checkout@v4
-
-      - name: Fetch SiteIni Pack
-        uses: actions/checkout@v4
-        with:
-          repository: SilentButeo2/webgrabplus-siteinipack
-          path: config/siteini.pack
-
-      - name: Set Country
-        run: |
-          REQ_COUNTRY="${{ github.event.client_payload.country }}"
-          INPUT_COUNTRY="${{ github.event.inputs.country }}"
-          COUNTRY=${REQ_COUNTRY:-${INPUT_COUNTRY:-CA}}
-          echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
 
       - name: Run Python Filter
-        run: python3 filter_wg_channels.py ${{ env.COUNTRY }}
-
-      - name: Run WebGrab+Plus (Entrypoint Bypass)
         run: |
-          docker run --rm \
-            --user root \
-            --network host \
-            --entrypoint "" \
-            -v $(pwd)/config:/config \
-            -v $(pwd)/epg_db:/data \
-            lscr.io/linuxserver/webgrabplus:latest \
-            /bin/sh -c "
-              # Find the binaries inside the container
-              DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
-              DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
-              
-              echo \"Found Dotnet at: \$DOTNET_BIN\"
-              echo \"Found DLL at: \$DLL_PATH\"
-              
-              # Execute directly, bypassing the 'Checking Internet' script
-              \$DOTNET_BIN \$DLL_PATH /config skipcheck
-            "
+          COUNTRY=${{ github.event.client_payload.country || inputs.country || 'CA' }}
+          python3 filter_wg_channels.py "$COUNTRY"
+          echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
+
+      - name: Show generated WebGrab config (debug)
+        run: |
+          echo "=== WebGrab++.config.xml contents ==="
+          cat config/WebGrab++.config.xml || true
+          echo "====================================="
+
+      - name: Install .NET 9 runtime + Download & Run WebGrab+Plus natively
+        run: |
+          echo "Installing .NET 9 runtime (required for WG++ v5.5+)..."
+          wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+          chmod +x dotnet-install.sh
+          ./dotnet-install.sh --channel 9.0 --install-dir ./dotnet
+          export DOTNET_ROOT=$(pwd)/dotnet
+          export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
+          dotnet --version || echo ".NET version check failed"
+
+          echo "Downloading WebGrab+Plus Linux installer..."
+          wget --user-agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" \
+            -O WebGrabPlus_5.5_install.tar.gz \
+            "https://webgrabplus.com/sites/default/files/download/SW/V5.5.0/WebGrabPlus_5.5_install.tar.gz" \
+            || { echo "Download failed"; exit 1; }
+
+          echo "Downloaded file details:"
+          ls -lh WebGrabPlus_5.5_install.tar.gz
+          file WebGrabPlus_5.5_install.tar.gz
+
+          echo "Extracting archive..."
+          tar -zxvf WebGrabPlus_5.5_install.tar.gz || { echo "Extraction failed"; exit 1; }
+
+          echo "Extracted contents:"
+          ls -la .
+
+          # Go to .wg++ (official extraction target)
+          if [ -d ".wg++" ]; then
+            cd .wg++
+          else
+            echo "No .wg++ folder found after extraction"
+            exit 1
+          fi
+
+          echo "Current dir: $(pwd)"
+          ls -la
+
+          # Copy your config + siteini.pack (now from repo)
+          cp -r ../config/* ./ 2>/dev/null || true
+          # siteini.pack should already be in correct relative path
+
+          echo "Overriding output path..."
+          mkdir -p output
+          sed -i '/<filename>/c\  <filename>output/'${{ env.COUNTRY }}'.xml</filename>' WebGrab++.config.xml || true
+          grep filename WebGrab++.config.xml || echo "Filename override check"
+
+          echo "Running install.sh if present..."
+          [ -f "install.sh" ] && chmod +x install.sh && ./install.sh || echo "No install.sh or skipped"
+
+          echo "Starting WebGrab+Plus..."
+          if [ -f "run.net.sh" ]; then
+            chmod +x run.net.sh
+            ./run.net.sh || echo "run.net.sh exited $?"
+          else
+            dotnet bin.net/WebGrab+Plus.dll . || echo "Direct run exited $?"
+          fi
+
+          echo "Copying generated EPG back..."
+          cp output/*.xml ../../epg_db/ 2>/dev/null || true
+          cp WebGrab*.log* ../../config/ 2>/dev/null || true
+
+      - name: Show WebGrab logs
+        if: always()
+        run: |
+          echo "WebGrab logs:"
+          ls -la config/ | grep -i log || true
+          cat config/WebGrab*.log* 2>/dev/null || echo "No logs"
 
       - name: Fix Permissions
         if: always()
-        run: sudo chown -R $USER:$USER epg_db/ config/
+        run: sudo chown -R $(whoami) epg_db/ config/ || true
 
-      - name: Update Status
+      - name: Verify Output
+        run: |
+          echo "Checking epg_db/${{ env.COUNTRY }}.xml ..."
+          ls -lh epg_db/ || true
+          if [ -f "epg_db/${{ env.COUNTRY }}.xml" ] && [ -s "epg_db/${{ env.COUNTRY }}.xml" ]; then
+            echo "SUCCESS - file exists and has size > 0"
+            du -h epg_db/${{ env.COUNTRY }}.xml
+          else
+            echo "FAILED - no or empty XML"
+          fi
+
+      - name: Update status.json & Commit
         if: always()
         run: |
           python3 -c "
           import json, datetime, os
-          country = '${{ env.COUNTRY }}'
-          status_file = 'epg_db/status.json'
-          xml_file = f'epg_db/{country}.xml'
-          success = os.path.exists(xml_file) and os.path.getsize(xml_file) > 0
-          data = {}
-          if os.path.exists(status_file):
-              try:
-                  with open(status_file, 'r') as f: data = json.load(f)
-              except: data = {}
-          data[country] = {
-              'status': 'ready' if success else 'failed',
-              'last_run': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-              'file_size': f'{os.path.getsize(xml_file) // 1024} KB' if success else '0 KB'
-          }
-          with open(status_file, 'w') as f: json.dump(data, f, indent=4)
+          c = '${{ env.COUNTRY }}'
+          f = f'epg_db/{c}.xml'
+          ex = os.path.exists(f) and os.path.getsize(f) > 1000
+          d = {'country': c, 'status': 'ready' if ex else 'failed', 'last_run': datetime.datetime.now(datetime.UTC).isoformat(), 'file_found': ex, 'size': os.path.getsize(f) if ex else 0}
+          with open('epg_db/status.json', 'w') as fp: json.dump(d, fp, indent=2)
           "
-
-      - name: Push to Repo
-        if: always()
-        run: |
-          git config --global user.name "EPG-Bot"
+          git config --global user.name "EPG Bot"
           git config --global user.email "bot@github.com"
           git add epg_db/
-          git commit -m "Update EPG for ${{ env.COUNTRY }} [skip ci]" || exit 0
-          git push
+          git commit -m "EPG update for ${{ env.COUNTRY }} [skip ci]" || echo "No changes"
+          git push || echo "Push skipped"
