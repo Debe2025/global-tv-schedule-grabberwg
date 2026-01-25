@@ -1,22 +1,23 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0"?>
 <settings>
-  <filename>/data/placeholder.xml</filename>
-  <mode>n</mode>
-  <postprocess grab="y" run="n">rex</postprocess>
-  <user-agent>Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36</user-agent>
+  <!-- Template only. filter_wg_channels.py will overwrite filename -->
+  <filename>output/guide.xml</filename>
+
+  <!-- new + nocache -->
+  <mode>n#</mode>
+
+  <!-- siteini.pack is copied into .wg++ at runtime -->
+  <siteini>siteini.pack</siteini>
+
   <logging>on</logging>
-  
-  <retry time-out="10" skip="y">2</retry>
-  
-  <update>n</update>
-  
-  <timespan>1</timespan>
+
+  <retry time-out="5" skip="y">4</retry>
+
+  <timespan days="2"/>
+
+  <!-- force update -->
   <update>f</update>
   
-  <siteini>/config/siteini.pack</siteini>
-  
-  <!-- Proxy Settings - Add your proxy details below -->
-  <proxy>your.proxy.server:port</proxy>
-
-  
+  <!-- User agent to help with internet detection and site compatibility -->
+  <user-agent>Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36</user-agent>
 </settings>
