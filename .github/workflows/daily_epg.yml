@@ -36,7 +36,7 @@ jobs:
           echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
           python3 filter_wg_channels.py $COUNTRY
 
-      - name: Run WebGrab+Plus (Root Force)
+      - name: Run WebGrab+Plus (Final Root Force)
         run: |
           docker run --rm \
             --user root \
@@ -45,9 +45,16 @@ jobs:
             -v $(pwd)/epg_db:/data \
             lscr.io/linuxserver/webgrabplus:latest \
             /bin/sh -c "
-              # Dynamically find the binary to avoid 'not found' errors
-              DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
-              dotnet \$DLL_PATH /config skipcheck
+              # 1. Locate the dotnet binary
+              DOTNET=\$(find / -name dotnet -type f -executable | head -n 1)
+              # 2. Locate the WebGrab DLL
+              DLL=\$(find /app -name WebGrab+Plus.dll | head -n 1)
+              
+              echo \"Using Dotnet: \$DOTNET\"
+              echo \"Using DLL: \$DLL\"
+              
+              # 3. Execute with skipcheck bypass
+              \$DOTNET \$DLL /config skipcheck
             "
 
       - name: Fix Permissions
