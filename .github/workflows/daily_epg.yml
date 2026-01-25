@@ -37,24 +37,24 @@ jobs:
       - name: Run Python Filter
         run: python3 filter_wg_channels.py ${{ env.COUNTRY }}
 
-      - name: Run WebGrab+Plus (The Final Fix)
+      - name: Run WebGrab+Plus (Entrypoint Bypass)
         run: |
           docker run --rm \
             --user root \
             --network host \
+            --entrypoint "" \
             -v $(pwd)/config:/config \
             -v $(pwd)/epg_db:/data \
             lscr.io/linuxserver/webgrabplus:latest \
             /bin/sh -c "
-              # 1. Find where the dotnet binary is hiding
+              # Find the binaries inside the container
               DOTNET_BIN=\$(find / -name dotnet -type f -executable | head -n 1)
-              # 2. Find the actual WebGrab program file
               DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
               
               echo \"Found Dotnet at: \$DOTNET_BIN\"
               echo \"Found DLL at: \$DLL_PATH\"
               
-              # 3. Run it with the 'skipcheck' flag to ignore the No Internet error
+              # Execute directly, bypassing the 'Checking Internet' script
               \$DOTNET_BIN \$DLL_PATH /config skipcheck
             "
 
@@ -78,7 +78,8 @@ jobs:
               except: data = {}
           data[country] = {
               'status': 'ready' if success else 'failed',
-              'last_run': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+              'last_run': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+              'file_size': f'{os.path.getsize(xml_file) // 1024} KB' if success else '0 KB'
           }
           with open(status_file, 'w') as f: json.dump(data, f, indent=4)
           "
