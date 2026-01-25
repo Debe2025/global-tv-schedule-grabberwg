@@ -27,29 +27,27 @@ jobs:
           repository: SilentButeo2/webgrabplus-siteinipack
           path: config/siteini.pack
 
-      - name: Set Dynamic Country
+      - name: Run Python Filter
         run: |
+          # Priority: API Payload > Manual Input > Default CA
           REQ_COUNTRY="${{ github.event.client_payload.country }}"
           INPUT_COUNTRY="${{ github.event.inputs.country }}"
-          FINAL_COUNTRY=${REQ_COUNTRY:-${INPUT_COUNTRY:-CA}}
-          echo "COUNTRY=$FINAL_COUNTRY" >> $GITHUB_ENV
+          COUNTRY=${REQ_COUNTRY:-${INPUT_COUNTRY:-CA}}
+          echo "COUNTRY=$COUNTRY" >> $GITHUB_ENV
+          python3 filter_wg_channels.py $COUNTRY
 
-      - name: Run Python Filter
-        run: python3 filter_wg_channels.py ${{ env.COUNTRY }}
-
-      - name: Run WebGrab+Plus (Dynamic Executable Search)
+      - name: Run WebGrab+Plus (Root Force)
         run: |
           docker run --rm \
-            --network="host" \
+            --user root \
+            --network host \
             -v $(pwd)/config:/config \
             -v $(pwd)/epg_db:/data \
-            -e PUID=1000 -e PGID=1000 \
             lscr.io/linuxserver/webgrabplus:latest \
             /bin/sh -c "
-              DOTNET_PATH=\$(which dotnet || find / -name dotnet -type f -executable | head -n 1)
+              # Dynamically find the binary to avoid 'not found' errors
               DLL_PATH=\$(find /app -name WebGrab+Plus.dll | head -n 1)
-              echo 'Executing: \$DOTNET_PATH \$DLL_PATH /config skipcheck'
-              \$DOTNET_PATH \$DLL_PATH /config skipcheck
+              dotnet \$DLL_PATH /config skipcheck
             "
 
       - name: Fix Permissions
