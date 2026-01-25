@@ -9,7 +9,7 @@ from collections import defaultdict
 
 API_TIMEOUT = 20
 API_RETRIES = 3
-MAX_CHANNELS = 60 
+MAX_CHANNELS = 60   # adjust as needed
 
 def fetch_json(url):
     for attempt in range(API_RETRIES):
@@ -28,7 +28,7 @@ def build_dynamic_config(country_code: str):
     Path("config").mkdir(exist_ok=True)
     Path("epg_db").mkdir(exist_ok=True)
 
-    # 1. Load template
+    # ── Load template ─────────────────────────────────────
     template = Path("config/master.config.xml")
     if not template.exists():
         sys.exit("ERROR: master.config.xml not found")
@@ -36,16 +36,15 @@ def build_dynamic_config(country_code: str):
     tree = ET.parse(template)
     root = tree.getroot()
 
-    # 2. Set Path - MUST BE /data for your Docker Volume Mapping
+    # ── Set filename for Docker container ─────────────────
     filename = root.find("filename")
     if filename is not None:
-        filename.text = f"/data/{country_code}.xml" 
+        # Docker maps epg_db to /data
+        filename.text = f"/data/{country_code}.xml"
     else:
-        # If tag missing, create it
-        el = ET.SubElement(root, "filename")
-        el.text = f"/data/{country_code}.xml"
+        print("WARNING: <filename> missing in template")
 
-    # 3. Fetch IPTV-org data
+    # ── Fetch IPTV-org data ───────────────────────────────
     try:
         guides = fetch_json("https://iptv-org.github.io/api/guides.json")
         channels = fetch_json("https://iptv-org.github.io/api/channels.json")
@@ -56,24 +55,27 @@ def build_dynamic_config(country_code: str):
         c["id"] for c in channels if c.get("country") == country_code
     }
 
-    # 4. Build siteini map (folder-aware)
+    # ── Build siteini map (folder-aware, multi-hit safe) ──
     pack_root = Path("config/siteini.pack")
     if not pack_root.exists():
         sys.exit("ERROR: siteini.pack missing")
 
     ini_map = defaultdict(list)
+
     for ini in pack_root.rglob("*.ini"):
-        # Get path relative to siteini.pack (e.g., 'Canada/tv.cravetv.ca')
         rel = ini.relative_to(pack_root).with_suffix("")
         ini_map[ini.name].append(str(rel))
 
-    # 5. Build channel list
+    print(f"Indexed {sum(len(v) for v in ini_map.values())} siteini files")
+
+    # ── Build channel list ────────────────────────────────
     added = 0
     channels_xml = []
 
     for g in guides:
         if added >= MAX_CHANNELS:
             break
+
         if g["channel"] not in country_channels:
             continue
 
@@ -81,7 +83,7 @@ def build_dynamic_config(country_code: str):
         if ini_name not in ini_map:
             continue
 
-        # Use the first path found for this ini
+        # Prefer country-specific folder if possible
         site_path = ini_map[ini_name][0]
 
         ch = ET.Element("channel")
@@ -93,19 +95,25 @@ def build_dynamic_config(country_code: str):
         channels_xml.append(ch)
         added += 1
 
-    # 6. Replace existing <channel> entries
+    # ── Replace existing <channel> entries ────────────────
     for old in root.findall("channel"):
         root.remove(old)
+
     for ch in channels_xml:
         root.append(ch)
 
-    # 7. Save config
+    # ── Save config ───────────────────────────────────────
     out = Path("config/WebGrab++.config.xml")
     tree.write(out, encoding="utf-8", xml_declaration=True)
 
-    print(f"Successfully generated config for {country_code} with {added} channels.")
+    print(f"Generated WebGrab++.config.xml")
+    print(f"Country: {country_code}")
+    print(f"Channels added: {added}")
+    print(f"Output file: /data/{country_code}.xml")
+
+    if added == 0:
+        print("WARNING: No matching channels found")
 
 if __name__ == "__main__":
-    # Get country from command line or default to CA
     country = sys.argv[1].upper() if len(sys.argv) > 1 else "CA"
     build_dynamic_config(country)
