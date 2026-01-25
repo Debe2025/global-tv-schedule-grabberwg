@@ -14,5 +14,9 @@
   <update>f</update>
   
   <siteini>/config/siteini.pack</siteini>
+  
+  <!-- Proxy Settings - Add your proxy details below -->
+  <proxy>your.proxy.server:port</proxy>
 
-  </settings>
+  
+</settings>
