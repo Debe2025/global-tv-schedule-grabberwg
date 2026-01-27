@@ -1,0 +1,14 @@
+services:
+  webgrabplus:
+    image: lscr.io/linuxserver/webgrabplus:latest
+    container_name: webgrabplus
+    hostname: wgplus-local  # Required for license verification
+    mac_address: 00:00:00:00:00:00 # Fixed MAC recommended for stability
+    environment:
+      - PUID=1000 # Run 'id' in terminal to find your UID
+      - PGID=1000 # Run 'id' in terminal to find your GID
+      - TZ=Europe/London
+    volumes:
+      - ./config:/config
+      - ./data:/data
+    restart: unless-stopped
